@@ -105,7 +105,13 @@ class NegLogLikelihood(Loss):
         print outputs[self.mu_name]
         print outputs[self.sig_name]
         print outputs[self.pi_name]
-        
+        # err = outputs[self.mu_name] # - self._target
+        # if self._weights is not None:
+        #     return (self._weights * err * err).sum() / self._weights.sum()
+        # return (err * err).mean()
+        # return outputs[self.pi_name].mean()
+        return TT.scalar()
+            
 class MeanSquaredError(Loss):
     r'''Mean-squared-error (MSE) loss function.
 

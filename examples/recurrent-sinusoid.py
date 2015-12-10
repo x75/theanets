@@ -56,7 +56,7 @@ wave_ax.plot(T, SIN, ':', label='Target', alpha=0.7, color='#111111')
 # For each layer type, train a model containing that layer, and plot its
 # predicted output.
 for i, layer in enumerate((
-        dict(form='rnn', activation='relu', diagonal=0.5),
+        dict(form='rnn', activation='relu', diagonal=0.5, name="rnn"),
         dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
         dict(form='scrn', activation='linear'),
         dict(form='gru', activation='relu'),
@@ -65,7 +65,14 @@ for i, layer in enumerate((
     name = layer['form']
     layer['size'] = 64
     logging.info('training %s model', name)
-    net = theanets.recurrent.Regressor([1, layer, 1], loss="nll")
+    kw = dict(inputs={'rnn:out': 64}, size=3)
+    # net = theanets.recurrent.Regressor([1, layer, 1], loss="nll")
+    net = theanets.recurrent.Regressor([1, layer,
+                                        dict(name="mu", activation="linear", **kw),
+                                        dict(name="sig", activation="linear", **kw),
+                                        dict(name="pi", activation="softmax", **kw),
+                                        dict(size=9, inputs={"mu:out": 3, "sig:out": 3, "pi:out": 3})])# , loss="nll")
+    net.set_loss("nll", mu_name="mu", sig_name="sig", pi_name="pi")
     losses = []
     for tm, _ in net.itertrain([ZERO, WAVES],
                                monitor_gradients=True,
