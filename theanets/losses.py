@@ -83,6 +83,29 @@ class Loss(util.Registrar(str('Base'), (), {})):
         raise NotImplementedError
 
 
+class NegLogLikelihood(Loss):
+    __extra_registration_keys__ = ['NLL', "MDN"]
+    
+    def __init__(self, mu_name='mu', sig_name='sig', pi_name='pi', **kwargs):
+        self.mu_name = mu_name
+        if ':' not in self.mu_name:
+            self.mu_name += ':out'
+        self.sig_name = sig_name
+        if ':' not in self.sig_name:
+            self.sig_name += ':out'
+        self.pi_name = pi_name
+        if ':' not in self.pi_name:
+            self.pi_name += ':out'
+
+        super(NegLogLikelihood, self).__init__(**kwargs)
+
+    def __call__(self, outputs):
+        # print self._target.ndim
+        # print outputs[self.output_name].ndim
+        print outputs[self.mu_name]
+        print outputs[self.sig_name]
+        print outputs[self.pi_name]
+        
 class MeanSquaredError(Loss):
     r'''Mean-squared-error (MSE) loss function.
 

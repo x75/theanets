@@ -65,7 +65,7 @@ for i, layer in enumerate((
     name = layer['form']
     layer['size'] = 64
     logging.info('training %s model', name)
-    net = theanets.recurrent.Regressor([1, layer, 1])
+    net = theanets.recurrent.Regressor([1, layer, 1], loss="nll")
     losses = []
     for tm, _ in net.itertrain([ZERO, WAVES],
                                monitor_gradients=True,
