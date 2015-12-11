@@ -279,8 +279,7 @@ class Regressor(graph.Network):
     non-default argument for the ``loss`` keyword argument when constructing
     your model.
     '''
-
-
+    
 class Classifier(graph.Network):
     '''A classifier computes a distribution over labels, given an input.
 

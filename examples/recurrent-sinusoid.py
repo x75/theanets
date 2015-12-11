@@ -37,6 +37,8 @@ TAU = 2 * np.pi
 T = np.linspace(0, TAU, 256)
 SIN = sum(c * np.sin(TAU * f * T) for c, f in ((2, 1.5), (3, 1.8), (4, 1.1)))
 
+# SIN = np.vstack((SIN, SIN)).T
+# print SIN.shape
 
 # Create an input dataset consisting of all zeros, and an output dataset
 # containing the target sine wave. We have to stack the target sine wave here
@@ -44,6 +46,9 @@ SIN = sum(c * np.sin(TAU * f * T) for c, f in ((2, 1.5), (3, 1.8), (4, 1.1)))
 # size for recurrent networks must be greater than 1.
 ZERO = np.zeros((BATCH_SIZE, len(T), 1), 'f')
 WAVES = np.concatenate([SIN[None, :, None]] * BATCH_SIZE, axis=0).astype('f')
+# WAVES = np.concatenate([SIN[None, :]] * BATCH_SIZE, axis=0).astype('f')
+
+# print ZERO.shape, WAVES.shape
 
 
 # Set up plotting axes to show the output result and learning curves.
@@ -53,26 +58,31 @@ _, (wave_ax, learn_ax) = plt.subplots(2, 1)
 wave_ax.plot(T, SIN, ':', label='Target', alpha=0.7, color='#111111')
 
 
+
 # For each layer type, train a model containing that layer, and plot its
 # predicted output.
 for i, layer in enumerate((
-        dict(form='rnn', activation='relu', diagonal=0.5, name="rnn"),
-        dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
-        dict(form='scrn', activation='linear'),
-        dict(form='gru', activation='relu'),
-        dict(form='lstm', activation='tanh'),
-        dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)))):
+    dict(form='rnn', activation='relu', diagonal=0.5), # name="rnn"
+    dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
+    dict(form='scrn', activation='linear'),
+    dict(form='gru', activation='relu'),
+    dict(form='lstm', activation='tanh'),
+    dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)),
+    )):
     name = layer['form']
     layer['size'] = 64
     logging.info('training %s model', name)
-    kw = dict(inputs={'rnn:out': 64}, size=3)
-    # net = theanets.recurrent.Regressor([1, layer, 1], loss="nll")
-    net = theanets.recurrent.Regressor([1, layer,
-                                        dict(name="mu", activation="linear", **kw),
-                                        dict(name="sig", activation="linear", **kw),
-                                        dict(name="pi", activation="softmax", **kw),
-                                        dict(size=9, inputs={"mu:out": 3, "sig:out": 3, "pi:out": 3})])# , loss="nll")
-    net.set_loss("nll", mu_name="mu", sig_name="sig", pi_name="pi")
+    # numix = 3
+    # kw = dict(inputs={"%s:out" % name: 64}, size=numix)
+    # kw = dict(inputs={"hid1:out": 64}, size=numix)
+    net = theanets.recurrent.Regressor([1, layer, 1])
+    # net = theanets.recurrent.MixtureDensity([1, layer,
+    #                                     dict(name="mu", activation="linear", **kw),
+    #                                     dict(name="sig", activation="exp", **kw),
+    #                                     dict(name="pi", activation="softmax", **kw),
+    #                                     ])
+    #                                     # dict(size=3 * numix, inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix})])# , loss="nll")
+    # net.set_loss("nll", mu_name="mu", sig_name="sig", pi_name="pi", numcomp=numix)
     losses = []
     for tm, _ in net.itertrain([ZERO, WAVES],
                                monitor_gradients=True,

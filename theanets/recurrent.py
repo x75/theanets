@@ -291,6 +291,59 @@ class Regressor(feedforward.Regressor):
     INPUT_NDIM = 3
     '''Number of dimensions for holding input data arrays.'''
 
+class MixtureDensity(Regressor):
+    def predict(self, x):
+        '''Compute a greedy classification for the given set of data.
+
+        Parameters
+        ----------
+        x : ndarray (num-examples, num-variables)
+            An array containing examples to classify. Examples are given as the
+            rows in this array.
+
+        Returns
+        -------
+        k : ndarray (num-examples, )
+            A vector of class index values, one per row of input data.
+        '''
+        ff = self.feed_forward(x)
+        mu = ff["mu:out"]
+        sig = ff["sig:out"]
+        pi = ff["pi:out"]
+        # print pi.shape
+        # print "mu", mu
+        y = np.zeros_like(mu)
+        for b in range(y.shape[0]): # loop batches
+            for i in range(y.shape[1]): # loop time
+                pimax = np.random.multinomial(1, pi[b,i]).argmax(axis=-1)
+                y[b,i] = np.random.normal(mu[b,pimax], sig[b,pimax])
+                # y[b,i] = sig[b,pimax]
+
+        # compidx = np.where(np.random.multinomial(1, ps) == 1.0)[0][0]
+        # y = np.random.normal(mu[compidx], sig[compidx])
+        # y = compidx
+        # return y
+        
+        # return self.feed_forward(x)[self.layers[-1].output_name()].argmax(axis=-1)
+        return y
+
+    # def predict_proba(self, x):
+    #     '''Compute class posterior probabilities for the given set of data.
+
+    #     Parameters
+    #     ----------
+    #     x : ndarray (num-examples, num-variables)
+    #         An array containing examples to predict. Examples are given as the
+    #         rows in this array.
+
+    #     Returns
+    #     -------
+    #     p : ndarray (num-examples, num-classes)
+    #         An array of class posterior probability values, one per row of input
+    #         data.
+    #     '''
+    #     return self.feed_forward(x)[self.layers[-1].output_name()]
+
 
 class Classifier(feedforward.Classifier):
     '''A classifier computes a distribution over labels, given an input.

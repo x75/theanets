@@ -4,6 +4,7 @@ r'''These loss functions are available for neural network models.'''
 
 import climate
 import numpy as np
+from theano import shared
 import theano.tensor as TT
 
 from . import util
@@ -86,7 +87,7 @@ class Loss(util.Registrar(str('Base'), (), {})):
 class NegLogLikelihood(Loss):
     __extra_registration_keys__ = ['NLL', "MDN"]
     
-    def __init__(self, mu_name='mu', sig_name='sig', pi_name='pi', **kwargs):
+    def __init__(self, mu_name='mu', sig_name='sig', pi_name='pi', numcomp=1, **kwargs):
         self.mu_name = mu_name
         if ':' not in self.mu_name:
             self.mu_name += ':out'
@@ -97,20 +98,58 @@ class NegLogLikelihood(Loss):
         if ':' not in self.pi_name:
             self.pi_name += ':out'
 
+        self.numcomp = numcomp
+
         super(NegLogLikelihood, self).__init__(**kwargs)
 
+    def log(self):
+        '''Log some diagnostic info about this loss.'''
+        logging.info('using loss: %s * %s (mu %s, sig %s, pi %s)',
+                     self.weight, self.__class__.__name__,
+                     self.mu_name, self.sig_name, self.pi_name)
+        
     def __call__(self, outputs):
         # print self._target.ndim
         # print outputs[self.output_name].ndim
-        print outputs[self.mu_name]
-        print outputs[self.sig_name]
-        print outputs[self.pi_name]
+        mu = outputs[self.mu_name]
+        # # log sigma
+        # logsig = outputs[self.sig_name]
+        # # exponentiate logsig
+        # sig = TT.exp(logsig)
+        sig = outputs[self.sig_name]
+        # this comes out of softmax layer by network definition
+        pi = outputs[self.pi_name]
+        # print type(self._target)
+
+
+
+        # number of mixture components
+        # n = mu.shape[2]
+        # print n
+        n = shared(self.numcomp)
+        print n.get_value()
+        print self._target.broadcastable
+        # loss = TT.scalar("loss")
+        # _starget = TT.dot(self._target, TT.ones_like(mu))
+        _starget = TT.extra_ops.repeat(self._target, n, axis=2) # * np.ones_like(mu)
+        print _starget
+        # print "_starget.shape", _starget.shape.get_value()
+        # theano.tensor.Elemwise.__call__(self, *v, **kw)
+        ps = TT.exp(-((_starget - mu)**2) / (2 * sig**2))/(sig * TT.sqrt(2 * np.pi))
+        # ps = _starget - mu + sig
+        # ps = TT.exp(-((self._target - mu)**2) / (2 * sig**2))/(sig * TT.sqrt(2 * np.pi))
+        pin = ps * pi # elementwise
+        lp = -TT.log(TT.sum(pin, axis=1, keepdims=True))
+        loss = (lp.sum()/n) # .mean() # using mean here to create a scalar
+        # print type(loss)
+        # print mu, sig, pi, n, ps, pin, lp, "loss", loss
+                
         # err = outputs[self.mu_name] # - self._target
         # if self._weights is not None:
         #     return (self._weights * err * err).sum() / self._weights.sum()
         # return (err * err).mean()
-        # return outputs[self.pi_name].mean()
-        return TT.scalar()
+        return loss
+        # return TT.scalar()
             
 class MeanSquaredError(Loss):
     r'''Mean-squared-error (MSE) loss function.

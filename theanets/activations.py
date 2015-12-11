@@ -60,6 +60,8 @@ def _softmax(x):
     z = TT.exp(x - x.max(axis=-1, keepdims=True))
     return z / z.sum(axis=-1, keepdims=True)
 
+def _exp(x):
+    return TT.exp(x)
 
 COMMON = {
     # s-shaped
@@ -69,6 +71,7 @@ COMMON = {
 
     # softmax (typically for classification)
     'softmax':     _softmax,
+    'exp':         _exp,
 
     # linear variants
     'linear':      _identity,

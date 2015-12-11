@@ -73,12 +73,12 @@ print("T.shape, SIN.shape, ZERO.shape, WAVES_SIN.shape", T.shape, SIN.shape, ZER
 # load wave data #2
 ds = wavdataset(
     sample_len = len(T), # 7*441,
-    n_samples = 10,
+    n_samples = 1,
     filename = "../../smp/playground/sequence/drinksonus44.wav")
 print("len(ds)", len(ds))
 print("len(ds[0][0])", len(ds[0][0]))
 
-print("ds[0][0].shape, SIN.shape", ds[1][0].shape, SIN.shape)
+# print("ds[0][0].shape, SIN.shape", ds[1][0].shape, SIN.shape)
 
 # WAVES_WAV = np.concatenate([ds[0][0][None, :]] * BATCH_SIZE, axis=0).astype('f')
 WAVES_WAV = np.array(ds[:])[:,0,:,:].astype(np.float32)
@@ -87,8 +87,8 @@ print("WAVES_WAV.shape", WAVES_WAV.shape)
 # sys.exit()
 # massage wave data
 
-# WAVES = WAVES_SIN.copy()
-WAVES = WAVES_WAV.copy()
+WAVES = WAVES_SIN.copy()
+# WAVES = WAVES_WAV.copy()
 
 INPUT = np.roll(WAVES, 1, axis=1)# * 0.1
 
@@ -117,8 +117,8 @@ print("T.shape, WAVES.shape", T.shape, WAVES.shape)
 
 # Plot the target wave.
 # wave_ax.plot(T, SIN, ':', label='Target', alpha=0.7, color='#111111')
-wave_ax.plot(T, ds[0][0], ':', label='Target', alpha=0.7, color='#111111')
-# wave_ax.plot(T, WAVES, ':', label='Target', alpha=0.7, color='#111111')
+# wave_ax.plot(T, ds[0][0], ':', label='Target', alpha=0.7, color='#111111')
+wave_ax.plot(T, WAVES[0], ':', label='Target', alpha=0.7, color='#111111')
 
 
 # For each layer type, train a model containing that layer, and plot its
@@ -126,10 +126,12 @@ wave_ax.plot(T, ds[0][0], ':', label='Target', alpha=0.7, color='#111111')
 
 networks = [
     dict(form='rnn', activation='relu', diagonal=0.5),
-        dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
-        dict(form='gru', activation='relu'),
-        dict(form='lstm', activation='tanh'),
-    dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 64))
+    dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
+    dict(form='scrn', activation='linear'),
+    dict(form='gru', activation='relu'),
+    dict(form='lstm', activation='tanh'),
+    dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)),
+    # dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 64)),
 ]
 
 # networks = [
@@ -139,10 +141,24 @@ networks = [
 for i, layer in enumerate(networks):
     print("layer",layer)
     name = layer['form']
-    layer['size'] = 126 # 64
+    # layer['size'] = 126 # 64
+    layer['size'] = 64
     logging.info('training %s model', name)
     
-    net = theanets.recurrent.Regressor([1, layer, 1])
+    # net = theanets.recurrent.Regressor([1, layer, 1])
+    
+    numix = 3
+    # kw = dict(inputs={"%s:out" % name: 64}, size=numix)
+    kw = dict(inputs={"hid1:out": layer["size"]}, size=numix)
+    # net = theanets.recurrent.Regressor([1, layer, 1])
+    net = theanets.recurrent.MixtureDensity([1, layer,
+                                        dict(name="mu", activation="linear", **kw),
+                                        dict(name="sig", activation="exp", **kw),
+                                        dict(name="pi", activation="softmax", **kw),
+                                        ])
+                                        # dict(size=3 * numix, inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix})])# , loss="nll")
+    net.set_loss("nll", mu_name="mu", sig_name="sig", pi_name="pi", numcomp=numix)
+    
     losses = []
     # """
     # for tm, _ in net.itertrain([ZERO, WAVES],
@@ -150,7 +166,7 @@ for i, layer in enumerate(networks):
     for tm, _ in net.itertrain([INPUT, WAVES],
                                monitor_gradients=True,
                                batch_size=BATCH_SIZE,
-                               algorithm='rmsprop',
+                               algo='adagrad',
                                learning_rate=0.0001,
                                momentum=0.9,
                                min_improvement=0.01): #, save_progress="recurrent_waves_{}", save_every=100):
@@ -165,29 +181,29 @@ for i, layer in enumerate(networks):
 
     # net.save("recurrent_waves_net_%s" % name)
     
-    # freerunning
-    freerun_steps = 200
-    prd2 = np.zeros((freerun_steps-1, 1), dtype=np.float32)
-    inp = np.concatenate((INPUT[0], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
-    print("inp.dtype", inp.dtype)
-    print("inp.shape", inp.shape)
-    # outp = net.predict(inp)
-    # print("inp.shape, outp.shape", inp.shape, outp.shape, outp[0].shape)
-    for j in range(freerun_steps-1):
-        bi = freerun_steps-j
-        print("bi = %d" % bi)
-        rinp = inp[np.newaxis,0:-bi]
-        outp = net.predict(rinp)
-        # print("outp.dtype", outp.dtype)
-        print("%d, inp.shape, rinp.shape, outp.shape" % j, inp.shape, rinp.shape, outp.shape, outp[0].shape)
-        # prd2[j,:] = outp[0,-1]
-        inp[-(freerun_steps-j)] = outp[0,-1] # prd2[j,:].reshape((1,1,1))
-        # print("inp.dtype", inp.dtype)
-    prd2 = outp[0].copy()
-    print("prd2.shape", prd2.shape)
-    freerun_ax.plot(prd2, label="%s" % name, alpha=0.7, color=COLORS[i])
-    freerun_ax.plot(inp, "--", label="%s" % name, alpha=0.2, color=COLORS[i])
-    # freerun_ax.plot(outp.flatten(), "ko", label="%s" % name, alpha=0.7, color=COLORS[i])
+    # # freerunning
+    # freerun_steps = 200
+    # prd2 = np.zeros((freerun_steps-1, 1), dtype=np.float32)
+    # inp = np.concatenate((INPUT[0], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
+    # print("inp.dtype", inp.dtype)
+    # print("inp.shape", inp.shape)
+    # # outp = net.predict(inp)
+    # # print("inp.shape, outp.shape", inp.shape, outp.shape, outp[0].shape)
+    # for j in range(freerun_steps-1):
+    #     bi = freerun_steps-j
+    #     print("bi = %d" % bi)
+    #     rinp = inp[np.newaxis,0:-bi]
+    #     outp = net.predict(rinp)
+    #     # print("outp.dtype", outp.dtype)
+    #     print("%d, inp.shape, rinp.shape, outp.shape" % j, inp.shape, rinp.shape, outp.shape, outp[0].shape)
+    #     # prd2[j,:] = outp[0,-1]
+    #     inp[-(freerun_steps-j)] = outp[0,-1] # prd2[j,:].reshape((1,1,1))
+    #     # print("inp.dtype", inp.dtype)
+    # prd2 = outp[0].copy()
+    # print("prd2.shape", prd2.shape)
+    # freerun_ax.plot(prd2, label="%s" % name, alpha=0.7, color=COLORS[i])
+    # freerun_ax.plot(inp, "--", label="%s" % name, alpha=0.2, color=COLORS[i])
+    # # freerun_ax.plot(outp.flatten(), "ko", label="%s" % name, alpha=0.7, color=COLORS[i])
     
 # Make the plots look nice.
 for ax in [wave_ax, learn_ax]:
