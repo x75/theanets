@@ -119,7 +119,8 @@ class NegLogLikelihood(Loss):
         sig = outputs[self.sig_name]
         # this comes out of softmax layer by network definition
         pi = outputs[self.pi_name]
-        # print type(self._target)
+        # print pi.shape
+        # print "nll", "type(_target)", type(self._target)
 
 
 
@@ -127,19 +128,24 @@ class NegLogLikelihood(Loss):
         # n = mu.shape[2]
         # print n
         n = shared(self.numcomp)
-        print n.get_value()
-        print self._target.broadcastable
+        # print n.get_value()
+        # print self._target.broadcastable
         # loss = TT.scalar("loss")
         # _starget = TT.dot(self._target, TT.ones_like(mu))
+        print self._target.type
         _starget = TT.extra_ops.repeat(self._target, n, axis=2) # * np.ones_like(mu)
+        print "equality", n == _starget.shape[-1], _starget.shape[-1]
         print _starget
+        print n.type, _starget.type
+        
         # print "_starget.shape", _starget.shape.get_value()
         # theano.tensor.Elemwise.__call__(self, *v, **kw)
-        ps = TT.exp(-((_starget - mu)**2) / (2 * sig**2))/(sig * TT.sqrt(2 * np.pi))
+        ps = TT.exp(-((_starget     - mu)**2) / (2 * sig**2))/(sig * TT.sqrt(2 * np.pi))
         # ps = _starget - mu + sig
         # ps = TT.exp(-((self._target - mu)**2) / (2 * sig**2))/(sig * TT.sqrt(2 * np.pi))
         pin = ps * pi # elementwise
         lp = -TT.log(TT.sum(pin, axis=1, keepdims=True))
+        # lp = -TT.log(TT.sum(pin, axis=1))
         loss = (lp.sum()/n) # .mean() # using mean here to create a scalar
         # print type(loss)
         # print mu, sig, pi, n, ps, pin, lp, "loss", loss

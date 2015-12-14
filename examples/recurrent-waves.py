@@ -53,6 +53,9 @@ SIN = sum(c * np.sin(TAU * f * T) for c, f in ((2, 1.5), (3, 1.8), (4, 1.1)))
 ZERO = np.zeros((BATCH_SIZE, len(T), 1), 'f')
 WAVES_SIN = np.concatenate([SIN[None, :, None]] * BATCH_SIZE, axis=0).astype('f')
 
+# SIN = np.vstack((SIN, SIN, SIN)).T
+# WAVES_SIN = np.concatenate([SIN[None, :]] * BATCH_SIZE, axis=0).astype('f')
+
 print("T.shape, SIN.shape, ZERO.shape, WAVES_SIN.shape", T.shape, SIN.shape, ZERO.shape, WAVES_SIN.shape)
 
 ################################################################################
@@ -125,12 +128,12 @@ wave_ax.plot(T, WAVES[0], ':', label='Target', alpha=0.7, color='#111111')
 # predicted output.
 
 networks = [
-    dict(form='rnn', activation='relu', diagonal=0.5),
-    dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
-    dict(form='scrn', activation='linear'),
-    dict(form='gru', activation='relu'),
-    dict(form='lstm', activation='tanh'),
-    dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)),
+    dict(form='rnn', activation='tanh', diagonal=0.5),
+    # dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
+    # dict(form='scrn', activation='linear'),
+    # dict(form='gru', activation='relu'),
+    # dict(form='lstm', activation='tanh'),
+    # dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)),
     # dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 64)),
 ]
 
@@ -152,9 +155,9 @@ for i, layer in enumerate(networks):
     kw = dict(inputs={"hid1:out": layer["size"]}, size=numix)
     # net = theanets.recurrent.Regressor([1, layer, 1])
     net = theanets.recurrent.MixtureDensity([1, layer,
-                                        dict(name="mu", activation="linear", **kw),
                                         dict(name="sig", activation="exp", **kw),
                                         dict(name="pi", activation="softmax", **kw),
+                                        dict(name="mu", activation="linear", **kw),
                                         ])
                                         # dict(size=3 * numix, inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix})])# , loss="nll")
     net.set_loss("nll", mu_name="mu", sig_name="sig", pi_name="pi", numcomp=numix)
