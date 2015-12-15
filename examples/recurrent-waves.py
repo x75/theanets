@@ -26,8 +26,8 @@ import matplotlib.pyplot as pl
 import numpy as np
 import theanets
 import sys
-# from 
-from smp.datasets import wavdataset
+
+# from smp.datasets import wavdataset
 
 climate.enable_default_logging()
 
@@ -37,7 +37,7 @@ COLORS = ['#d62728', '#1f77b4', '#2ca02c', '#9467bd', '#ff7f0e',
 BATCH_SIZE = 2
 
 
-extendo = 50
+extendo = 10
 # NUMDATAPTS = 8192
 # NUMDATAPTS = 1000
 NUMDATAPTS = 256 * extendo
@@ -47,7 +47,7 @@ TWOPI = 2 * np.pi
 TAU = TWOPI * extendo
 T = np.linspace(0, TAU, NUMDATAPTS)
 SIN = sum(c * np.sin(TWOPI * f * T) for c, f in ((2, 1.5), (3, 1.8), (4, 1.1)))
-
+SIN /= np.max(SIN)
 
 # Create an input dataset consisting of all zeros, and an output dataset
 # containing the target sine wave. We have to stack the target sine wave here
@@ -61,8 +61,8 @@ WAVES_SIN = np.concatenate([SIN[None, :, None]] * BATCH_SIZE, axis=0).astype('f'
 
 print("T.shape, SIN.shape, ZERO.shape, WAVES_SIN.shape", T.shape, SIN.shape, ZERO.shape, WAVES_SIN.shape)
 
-################################################################################
-# # load wave data #1
+# ################################################################################
+# # load wave data #2
 # ds = wavdataset(
 #     sample_len = len(T), # 7*441,
 #     n_samples = 1,
@@ -70,28 +70,11 @@ print("T.shape, SIN.shape, ZERO.shape, WAVES_SIN.shape", T.shape, SIN.shape, ZER
 # print("len(ds)", len(ds))
 # print("len(ds[0][0])", len(ds[0][0]))
 
-# print("ds[0][0].shape, SIN.shape", ds[0][0].shape, SIN.shape)
+# # print("ds[0][0].shape, SIN.shape", ds[1][0].shape, SIN.shape)
 
-# WAVES_WAV = np.concatenate([ds[0][0][None, :]] * BATCH_SIZE, axis=0).astype('f')
+# # WAVES_WAV = np.concatenate([ds[0][0][None, :]] * BATCH_SIZE, axis=0).astype('f')
+# WAVES_WAV = np.array(ds[:])[:,0,:,:].astype(np.float32)
 # print("WAVES_WAV.shape", WAVES_WAV.shape)
-
-################################################################################
-# load wave data #2
-ds = wavdataset(
-    sample_len = len(T), # 7*441,
-    n_samples = 1,
-    filename = "../../smp/playground/sequence/drinksonus44.wav")
-print("len(ds)", len(ds))
-print("len(ds[0][0])", len(ds[0][0]))
-
-# print("ds[0][0].shape, SIN.shape", ds[1][0].shape, SIN.shape)
-
-# WAVES_WAV = np.concatenate([ds[0][0][None, :]] * BATCH_SIZE, axis=0).astype('f')
-WAVES_WAV = np.array(ds[:])[:,0,:,:].astype(np.float32)
-print("WAVES_WAV.shape", WAVES_WAV.shape)
-
-# sys.exit()
-# massage wave data
 
 WAVES = WAVES_SIN.copy()
 # WAVES = WAVES_WAV.copy()
@@ -133,11 +116,11 @@ wave_ax.plot(T, WAVES[0], ':', label='Target', alpha=0.7, color='#111111')
 # predicted output.
 
 networks = [
-    dict(form='rnn', activation='tanh', diagonal=0.5),
+    # dict(form='rnn', activation='tanh', diagonal=0.5),
     # dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
     # dict(form='scrn', activation='linear'),
     # dict(form='gru', activation='relu'),
-    # dict(form='lstm', activation='tanh'),
+    dict(form='lstm', activation='tanh'),
     # dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)),
     # dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 64)),
 ]
@@ -155,15 +138,15 @@ for i, layer in enumerate(networks):
     
     # net = theanets.recurrent.Regressor([1, layer, 1])
     
-    numix = 20
+    numix = 3
     # kw = dict(inputs={"%s:out" % name: 64}, size=numix)
     kw = dict(inputs={"hid1:out": layer["size"]}, size=numix)
     outkw = dict(inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix}, size=numix*3)
     # net = theanets.recurrent.Regressor([1, layer, 1])
     net = theanets.recurrent.MixtureDensity([1, layer,
+                                        dict(name="mu", activation="linear", **kw),
                                         dict(name="sig", activation="exp", **kw),
                                         dict(name="pi", activation="softmax", **kw),
-                                        dict(name="mu", activation="linear", **kw),
                                         # dict(name="out", activation="linear", **outkw)
                                         ])
                                         # dict(size=3 * numix, inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix})])# , loss="nll")
@@ -176,17 +159,17 @@ for i, layer in enumerate(networks):
     for tm, _ in net.itertrain([INPUT, WAVES],
                                monitor_gradients=True,
                                batch_size=BATCH_SIZE,
-                               # algo="rmsprop",
+                               algo="rmsprop",
                                # algo = "adagrad",
-                               algo = "adadelta",
+                               # algo = "adadelta",
                                # algo = "adam",
                                # algo = "rprop",
                                # algo = "esgd",
                                # algo = "sgd",
                                # algo = "nag", # nope
                                learning_rate=0.0001,
-                               # momentum=0.9,
-                             nesterov=True,
+                                momentum=0.9,
+                              # nesterov=True,
                                min_improvement=0.01): #, save_progress="recurrent_waves_{}", save_every=100):
         losses.append(tm['loss'])
     # """
@@ -200,7 +183,7 @@ for i, layer in enumerate(networks):
     net.save("recurrent_waves_net_%s" % name)
     
     # freerunning
-    freerun_steps = 256 * 20 # extendo
+    freerun_steps = 256 * 1 # extendo
     prd2 = np.zeros((freerun_steps-1, 1), dtype=np.float32)
     inp = np.concatenate((INPUT[0], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
     print("inp.dtype", inp.dtype)
