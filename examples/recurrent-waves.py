@@ -36,14 +36,17 @@ COLORS = ['#d62728', '#1f77b4', '#2ca02c', '#9467bd', '#ff7f0e',
 
 BATCH_SIZE = 2
 
+
+extendo = 50
 # NUMDATAPTS = 8192
 # NUMDATAPTS = 1000
-NUMDATAPTS = 256
+NUMDATAPTS = 256 * extendo
 
 # Construct a complex sine wave as a sum of pure-frequency waves.
-TAU = 2 * np.pi
+TWOPI = 2 * np.pi
+TAU = TWOPI * extendo
 T = np.linspace(0, TAU, NUMDATAPTS)
-SIN = sum(c * np.sin(TAU * f * T) for c, f in ((2, 1.5), (3, 1.8), (4, 1.1)))
+SIN = sum(c * np.sin(TWOPI * f * T) for c, f in ((2, 1.5), (3, 1.8), (4, 1.1)))
 
 
 # Create an input dataset consisting of all zeros, and an output dataset
@@ -100,6 +103,7 @@ print("INPUT.shape", INPUT.shape)
 pl.subplot(311)
 pl.title("SIN")
 pl.plot(SIN)
+# pl.plot(T)
 pl.subplot(312)
 pl.title("WAVES / INPUT")
 pl.plot(WAVES[:,:,0].T)# + np.array((0.1, 0.2)))
@@ -115,6 +119,7 @@ pl.show()
 
 # Set up plotting axes to show the output result and learning curves.
 _, (wave_ax, learn_ax, freerun_ax) = pl.subplots(3, 1)
+# _, (wave_ax, learn_ax) = pl.subplots(2, 1)
 
 print("T.shape, WAVES.shape", T.shape, WAVES.shape)
 
@@ -150,64 +155,78 @@ for i, layer in enumerate(networks):
     
     # net = theanets.recurrent.Regressor([1, layer, 1])
     
-    numix = 3
+    numix = 20
     # kw = dict(inputs={"%s:out" % name: 64}, size=numix)
     kw = dict(inputs={"hid1:out": layer["size"]}, size=numix)
+    outkw = dict(inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix}, size=numix*3)
     # net = theanets.recurrent.Regressor([1, layer, 1])
     net = theanets.recurrent.MixtureDensity([1, layer,
                                         dict(name="sig", activation="exp", **kw),
                                         dict(name="pi", activation="softmax", **kw),
                                         dict(name="mu", activation="linear", **kw),
+                                        # dict(name="out", activation="linear", **outkw)
                                         ])
                                         # dict(size=3 * numix, inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix})])# , loss="nll")
     net.set_loss("nll", mu_name="mu", sig_name="sig", pi_name="pi", numcomp=numix)
     
     losses = []
-    # """
+    #"""
     # for tm, _ in net.itertrain([ZERO, WAVES],
     print("INPUT.shape, WAVES.shape", INPUT.shape, WAVES.shape)
     for tm, _ in net.itertrain([INPUT, WAVES],
                                monitor_gradients=True,
                                batch_size=BATCH_SIZE,
-                               algo='adagrad',
+                               # algo="rmsprop",
+                               # algo = "adagrad",
+                               algo = "adadelta",
+                               # algo = "adam",
+                               # algo = "rprop",
+                               # algo = "esgd",
+                               # algo = "sgd",
+                               # algo = "nag", # nope
                                learning_rate=0.0001,
-                               momentum=0.9,
+                               # momentum=0.9,
+                             nesterov=True,
                                min_improvement=0.01): #, save_progress="recurrent_waves_{}", save_every=100):
         losses.append(tm['loss'])
     # """
-    # net.load("recurrent_waves_net_rnn")
+    # net = net.load("recurrent_waves_net_rnn")
     # prd = net.predict(ZERO)
     prd = net.predict(INPUT)
     print("prd.shape", prd.shape)
     wave_ax.plot(T, prd[0, :, 0].flatten(), label=name, alpha=0.7, color=COLORS[i])
     learn_ax.plot(losses, label=name, alpha=0.7, color=COLORS[i])
 
-    # net.save("recurrent_waves_net_%s" % name)
+    net.save("recurrent_waves_net_%s" % name)
     
-    # # freerunning
-    # freerun_steps = 200
-    # prd2 = np.zeros((freerun_steps-1, 1), dtype=np.float32)
-    # inp = np.concatenate((INPUT[0], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
-    # print("inp.dtype", inp.dtype)
-    # print("inp.shape", inp.shape)
-    # # outp = net.predict(inp)
-    # # print("inp.shape, outp.shape", inp.shape, outp.shape, outp[0].shape)
-    # for j in range(freerun_steps-1):
-    #     bi = freerun_steps-j
-    #     print("bi = %d" % bi)
-    #     rinp = inp[np.newaxis,0:-bi]
-    #     outp = net.predict(rinp)
-    #     # print("outp.dtype", outp.dtype)
-    #     print("%d, inp.shape, rinp.shape, outp.shape" % j, inp.shape, rinp.shape, outp.shape, outp[0].shape)
-    #     # prd2[j,:] = outp[0,-1]
-    #     inp[-(freerun_steps-j)] = outp[0,-1] # prd2[j,:].reshape((1,1,1))
-    #     # print("inp.dtype", inp.dtype)
-    # prd2 = outp[0].copy()
-    # print("prd2.shape", prd2.shape)
-    # freerun_ax.plot(prd2, label="%s" % name, alpha=0.7, color=COLORS[i])
-    # freerun_ax.plot(inp, "--", label="%s" % name, alpha=0.2, color=COLORS[i])
-    # # freerun_ax.plot(outp.flatten(), "ko", label="%s" % name, alpha=0.7, color=COLORS[i])
-    
+    # freerunning
+    freerun_steps = 256 * 20 # extendo
+    prd2 = np.zeros((freerun_steps-1, 1), dtype=np.float32)
+    inp = np.concatenate((INPUT[0], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
+    print("inp.dtype", inp.dtype)
+    print("inp.shape", inp.shape)
+    # outp = net.predict(inp)
+    # print("inp.shape, outp.shape", inp.shape, outp.shape, outp[0].shape)
+    for j in range(freerun_steps-1):
+        bi = freerun_steps-j
+        print("bi = %d" % bi)
+        rinp = inp[np.newaxis,0:-bi]
+        outp = net.predict(rinp)
+        # print("outp.dtype", outp.dtype)
+        print("%d, inp.shape, rinp.shape, outp.shape" % j, inp.shape, rinp.shape, outp.shape, outp[0].shape)
+        # prd2[j,:] = outp[0,-1]
+        inp[-(freerun_steps-j)] = outp[0,-1] # prd2[j,:].reshape((1,1,1))
+        # print("inp.dtype", inp.dtype)
+    prd2 = outp[0].copy()
+    print("prd2.shape", prd2.shape)
+    freerun_ax.plot(prd2, label="%s" % name, alpha=0.7, color=COLORS[i])
+    freerun_ax.plot(inp, "--", label="%s" % name, alpha=0.2, color=COLORS[i])
+    # freerun_ax.plot(outp.flatten(), "ko", label="%s" % name, alpha=0.7, color=COLORS[i])
+
+np.save("input.npy", INPUT[0])
+np.save("prd.npy", prd[0, :, 0].flatten())
+np.save("prd2.npy", prd2)
+        
 # Make the plots look nice.
 for ax in [wave_ax, learn_ax]:
     ax.xaxis.tick_bottom()

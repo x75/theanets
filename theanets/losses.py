@@ -119,10 +119,9 @@ class NegLogLikelihood(Loss):
         sig = outputs[self.sig_name]
         # this comes out of softmax layer by network definition
         pi = outputs[self.pi_name]
+        # pi = TT.nnet.softmax(outputs[self.pi_name])
         # print pi.shape
         # print "nll", "type(_target)", type(self._target)
-
-
 
         # number of mixture components
         # n = mu.shape[2]
@@ -132,11 +131,14 @@ class NegLogLikelihood(Loss):
         # print self._target.broadcastable
         # loss = TT.scalar("loss")
         # _starget = TT.dot(self._target, TT.ones_like(mu))
-        print self._target.type
+        
+        # print self._target.type
+        
         _starget = TT.extra_ops.repeat(self._target, n, axis=2) # * np.ones_like(mu)
-        print "equality", n == _starget.shape[-1], _starget.shape[-1]
-        print _starget
-        print n.type, _starget.type
+        
+        # print "equality", n == _starget.shape[-1], _starget.shape[-1]
+        # print _starget
+        # print n.type, _starget.type
         
         # print "_starget.shape", _starget.shape.get_value()
         # theano.tensor.Elemwise.__call__(self, *v, **kw)
