@@ -279,7 +279,61 @@ class Regressor(graph.Network):
     non-default argument for the ``loss`` keyword argument when constructing
     your model.
     '''
-    
+
+class MixtureDensity(Regressor):
+    def predict(self, x):
+        '''Compute a greedy classification for the given set of data.
+
+        Parameters
+        ----------
+        x : ndarray (num-examples, num-variables)
+            An array containing examples to classify. Examples are given as the
+            rows in this array.
+
+        Returns
+        -------
+        k : ndarray (num-examples, )
+            A vector of class index values, one per row of input data.
+        '''
+        ff = self.feed_forward(x)
+        mu = ff["mu:out"]
+        sig = ff["sig:out"]
+        # sig = np.exp(sig)
+        pi = ff["pi:out"]
+        # print pi.shape
+        # print "mu", mu, mu.shape
+        y = np.zeros_like(x)
+        mus = np.zeros_like(mu)
+        sigs = np.zeros_like(sig)
+        pis = np.zeros_like(pi)
+        
+        # for b in range(y.shape[0]): # loop batches
+        for i in range(y.shape[1]): # loop time
+            pimax = np.random.multinomial(1, pi[i]).argmax(axis=-1)
+            mus[i] = mu[i]
+            sigs[i] = sig[i]
+            pis[i] = pi[i]
+            y[i] = np.random.normal(mu[i,pimax], sig[i,pimax])
+        print("i", i)
+
+        # import matplotlib.pylab as pl
+        # pl.subplot(311)
+        # pl.plot(mus[0])
+        # pl.subplot(312)
+        # pl.plot(sigs[0])
+        # pl.subplot(313)
+        # pl.plot(pis[0])
+        # pl.plot(np.sum(pis[0], axis=1))
+        # pl.show()
+        
+        # compidx = np.where(np.random.multinomial(1, ps) == 1.0)[0][0]
+        # y = np.random.normal(mu[compidx], sig[compidx])
+        # y = compidx
+        # return y
+        
+        # return self.feed_forward(x)[self.layers[-1].output_name()].argmax(axis=-1)
+        return y
+
 class Classifier(graph.Network):
     '''A classifier computes a distribution over labels, given an input.
 

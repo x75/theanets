@@ -37,7 +37,7 @@ COLORS = ['#d62728', '#1f77b4', '#2ca02c', '#9467bd', '#ff7f0e',
 BATCH_SIZE = 2
 
 
-extendo = 10
+extendo = 1
 # NUMDATAPTS = 8192
 # NUMDATAPTS = 1000
 NUMDATAPTS = 256 * extendo

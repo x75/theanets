@@ -133,8 +133,9 @@ class NegLogLikelihood(Loss):
         # _starget = TT.dot(self._target, TT.ones_like(mu))
         
         # print self._target.type
-        
-        _starget = TT.extra_ops.repeat(self._target, n, axis=2) # * np.ones_like(mu)
+
+        # axis = 2
+        _starget = TT.extra_ops.repeat(self._target, n, axis=-1) # * np.ones_like(mu)
         
         # print "equality", n == _starget.shape[-1], _starget.shape[-1]
         # print _starget
@@ -146,7 +147,8 @@ class NegLogLikelihood(Loss):
         # ps = _starget - mu + sig
         # ps = TT.exp(-((self._target - mu)**2) / (2 * sig**2))/(sig * TT.sqrt(2 * np.pi))
         pin = ps * pi # elementwise
-        lp = -TT.log(TT.sum(pin, axis=1, keepdims=True))
+        # axis = 1
+        lp = -TT.log(TT.sum(pin, axis=-2, keepdims=True))
         # lp = -TT.log(TT.sum(pin, axis=1))
         loss = (lp.sum()/n) # .mean() # using mean here to create a scalar
         # print type(loss)
