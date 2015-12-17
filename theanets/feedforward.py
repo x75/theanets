@@ -308,7 +308,7 @@ class MixtureDensity(Regressor):
         pis = np.zeros_like(pi)
         
         # for b in range(y.shape[0]): # loop batches
-        for i in range(y.shape[1]): # loop time
+        for i in range(y.shape[0]): # loop time
             pimax = np.random.multinomial(1, pi[i]).argmax(axis=-1)
             mus[i] = mu[i]
             sigs[i] = sig[i]
@@ -316,15 +316,15 @@ class MixtureDensity(Regressor):
             y[i] = np.random.normal(mu[i,pimax], sig[i,pimax])
         print("i", i)
 
-        # import matplotlib.pylab as pl
-        # pl.subplot(311)
-        # pl.plot(mus[0])
-        # pl.subplot(312)
-        # pl.plot(sigs[0])
-        # pl.subplot(313)
-        # pl.plot(pis[0])
-        # pl.plot(np.sum(pis[0], axis=1))
-        # pl.show()
+        import matplotlib.pylab as pl
+        pl.subplot(311)
+        pl.plot(mus)
+        pl.subplot(312)
+        pl.plot(sigs)
+        pl.subplot(313)
+        pl.plot(pis)
+        pl.plot(np.sum(pis[0], axis=0))
+        pl.show()
         
         # compidx = np.where(np.random.multinomial(1, ps) == 1.0)[0][0]
         # y = np.random.normal(mu[compidx], sig[compidx])
