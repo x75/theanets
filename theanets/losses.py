@@ -113,10 +113,10 @@ class NegLogLikelihood(Loss):
         # print outputs[self.output_name].ndim
         mu = outputs[self.mu_name]
         # # log sigma
-        # logsig = outputs[self.sig_name]
+        logsig = outputs[self.sig_name]
         # # exponentiate logsig
-        # sig = TT.exp(logsig)
-        sig = outputs[self.sig_name]
+        sig = TT.exp(logsig)
+        # sig = outputs[self.sig_name]
         # this comes out of softmax layer by network definition
         pi = outputs[self.pi_name]
         # pi = TT.nnet.softmax(outputs[self.pi_name])
@@ -150,7 +150,8 @@ class NegLogLikelihood(Loss):
         # axis = 1
         lp = -TT.log(TT.sum(pin, axis=-2, keepdims=True))
         # lp = -TT.log(TT.sum(pin, axis=1))
-        loss = (lp.sum()/n) # .mean() # using mean here to create a scalar
+        # loss = (lp.sum()/n) # .mean() # using mean here to create a scalar
+        loss = TT.sum(lp)/n # .mean() # using mean here to create a scalar
         # print type(loss)
         # print mu, sig, pi, n, ps, pin, lp, "loss", loss
                 

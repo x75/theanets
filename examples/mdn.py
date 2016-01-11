@@ -113,21 +113,26 @@ if train_second_keras:
 
 # generate some 1D regression data (reproducing Bishop book data, page 273). 
 # Note that the P(y|x) is not a nice distribution. E.g. it has three modes for x ~= 0.5
-N = 100
+# N = 1000
+N = 2500 # as in TF MDN
 # X = np.linspace(0,1,N).astype('f')
-X = np.random.uniform(-1, 1, (N, 1)).astype('f')
+X = np.random.uniform(-0.2, 1., (N, 1)).astype('f')
 # Y = np.cos(X)
 # Y = (X + 0.3 * np.sin(2*3.1415926*X) + np.random.uniform(-0.1, 0.1, (N, 1))).astype('f')
-Y = (X * 0.5 + 7.0 * np.sin(2*3.1415926*X) + np.random.uniform(-0.1, 0.1, (N, 1))).astype('f')
-# X,Y = Y,X
+Y = (X * 0.5 + 7.0 * np.sin(2*3.1415926*X) + np.random.uniform(-0.1, 0.1, (N, 1)) * 50.).astype('f')
+X,Y = Y,X
+
+# from TF MDN
+# Y = np.float32(np.random.uniform(-10.5, 10.5, (1, N))).T
+# R = np.float32(np.random.normal(size=(N,1))) # random noise
+# X = np.float32(np.sin(0.75*Y)*7.0+Y*0.5+R*1.0)
+
 
 # print(X.shape, Y.shape)
 # X = X.reshape((1, N, 1))
 # Y = Y.reshape((1, N, 1))
 X = X.reshape((N, 1))
 Y = Y.reshape((N, 1))
-
-
 
 pl.subplot(111)
 pl.scatter(X,Y,color='g')
@@ -146,8 +151,8 @@ pl.show()
 
 if train_third_mse:
     BATCH_SIZE = 1
-    numix = 3
-    numhidden = 20
+    numix = 24
+    numhidden = 24
     
     losses = []
 
@@ -175,12 +180,12 @@ if train_third_mse:
 
 
 if train_fourth_mdn:
-    BATCH_SIZE = 1
-    numix = 3
-    numhidden = 20
+    BATCH_SIZE = 2500
+    numix = 10
+    numhidden = 100
 
 
-    X,Y = Y,X
+    # X,Y = Y,X
     # X = X.reshape((1,N,1))
     # Y = Y.reshape((1,N,1))
     # print(X.shape, Y.shape)
@@ -195,7 +200,8 @@ if train_fourth_mdn:
     # net = theanets.recurrent.MixtureDensity([1, ("linear", numhidden),
     net = theanets.feedforward.MixtureDensity([1, dict(size=numhidden, activation="tanh"),
                                         dict(name="mu", activation="linear", **kw),
-                                        dict(name="sig", activation="exp", **kw),
+                                        # dict(name="sig", activation="exp", **kw),
+                                        dict(name="sig", activation="linear", **kw),
                                         dict(name="pi", activation="softmax", **kw),
                                          ])
 
@@ -209,18 +215,19 @@ if train_fourth_mdn:
         batch_size=BATCH_SIZE,
         # algo="rmsprop",
         # algo = "adagrad",
-        algo = "adadelta",
-        # algo = "adam",
+        # algo = "adadelta",
+        algo = "adam",
         # algo = "rprop",
         # algo = "esgd",
         # algo = "sgd",
         # algo = "nag", # nope
         # learning_rate=0.0001,
-        learning_rate=0.1,
+        # learning_rate=0.1,
         # momentum=0.9,
         # nesterov=True,
         # min_improvement=0.01,
-        max_updates=5000,
+        max_updates=10000,
+        patience=1000,
         ): #, save_progress="recurrent_waves_{}", save_every=100):
         losses.append(tm['loss'])
 

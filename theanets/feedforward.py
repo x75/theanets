@@ -298,23 +298,27 @@ class MixtureDensity(Regressor):
         ff = self.feed_forward(x)
         mu = ff["mu:out"]
         sig = ff["sig:out"]
-        # sig = np.exp(sig)
+        sig = np.exp(sig)
         pi = ff["pi:out"]
         # print pi.shape
         # print "mu", mu, mu.shape
         y = np.zeros_like(x)
-        mus = np.zeros_like(mu)
-        sigs = np.zeros_like(sig)
-        pis = np.zeros_like(pi)
+        mus = np.zeros((mu.shape[0], 1))
+        sigs = np.zeros((sig.shape[0], 1))
+        pis = np.zeros((pi.shape[0], 1))
+
+        # print("shapes", mus.shape, sigs.shape, pis.shape)
         
         # for b in range(y.shape[0]): # loop batches
         for i in range(y.shape[0]): # loop time
             pimax = np.random.multinomial(1, pi[i]).argmax(axis=-1)
-            mus[i] = mu[i]
-            sigs[i] = sig[i]
-            pis[i] = pi[i]
+            # print("pimax", pimax)
+            mus[i] = mu[i,pimax]
+            sigs[i] = sig[i,pimax]
+            pis[i] = pimax # pi[i,]
+            # print("mu[i,pimax], sig[i,pimax]", mu[i,pimax], sig[i,pimax])
             y[i] = np.random.normal(mu[i,pimax], sig[i,pimax])
-        print("i", i)
+        # print("i", i)
 
         import matplotlib.pylab as pl
         pl.subplot(311)
@@ -323,7 +327,7 @@ class MixtureDensity(Regressor):
         pl.plot(sigs)
         pl.subplot(313)
         pl.plot(pis)
-        pl.plot(np.sum(pis[0], axis=0))
+        # pl.plot(np.sum(pis, axis=1))
         pl.show()
         
         # compidx = np.where(np.random.multinomial(1, ps) == 1.0)[0][0]
