@@ -63,11 +63,11 @@ wave_ax.plot(T, SIN, ':', label='Target', alpha=0.7, color='#111111')
 # predicted output.
 for i, layer in enumerate((
     dict(form='rnn', activation='relu', diagonal=0.5), # name="rnn"
-    # dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
-    # dict(form='scrn', activation='linear'),
-    # dict(form='gru', activation='relu'),
-    # dict(form='lstm', activation='tanh'),
-    # dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)),
+    dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
+    dict(form='scrn', activation='linear'),
+    dict(form='gru', activation='relu'),
+    dict(form='lstm', activation='tanh'),
+    dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)),
     )):
     name = layer['form']
     layer['size'] = 64
