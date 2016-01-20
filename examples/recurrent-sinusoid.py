@@ -67,10 +67,11 @@ for i, layer in enumerate((
     dict(form='scrn', activation='linear'),
     dict(form='gru', activation='relu'),
     dict(form='lstm', activation='tanh'),
-    dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)),
+    # dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)), # 64
+    dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 32, 64, 128)),
     )):
     name = layer['form']
-    layer['size'] = 64
+    layer['size'] = 256
     logging.info('training %s model', name)
     # numix = 3
     # kw = dict(inputs={"%s:out" % name: 64}, size=numix)

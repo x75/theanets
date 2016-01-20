@@ -421,7 +421,7 @@ class Network(object):
         for r in regularizers:
             add('{}{}{}'.format(r.__class__.__name__, r.weight, r.pattern))
         return h.hexdigest()
-
+ 
     def build_graph(self, regularizers=()):
         '''Connect the layers in this network to form a computation graph.
 

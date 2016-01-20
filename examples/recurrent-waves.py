@@ -20,6 +20,7 @@ parameters. The other layer models fall somewhere in the middle but tend only to
 match the dominant frequency in the target wave.
 '''
 
+import argparse
 import climate
 import logging
 import matplotlib.pyplot as pl
@@ -29,12 +30,21 @@ import sys
 
 # from smp.datasets import wavdataset
 
+# arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("-m", "--mode", type=str, default="mse", help="mse or mdn")
+parser.add_argument("-o", "--optimizer", type=str, default="rmsprop", help="rmsprop, adagrad, adadelta, adam, rprop, esgd, sgd, nag")
+parser.add_argument("-bs", "--batch_size", type=int, default=2)
+
+args = parser.parse_args()
+
+
 climate.enable_default_logging()
 
 COLORS = ['#d62728', '#1f77b4', '#2ca02c', '#9467bd', '#ff7f0e',
           '#e377c2', '#8c564b', '#bcbd22', '#7f7f7f', '#17becf']
 
-BATCH_SIZE = 2
+BATCH_SIZE = args.batch_size
 
 
 extendo = 1
@@ -138,35 +148,40 @@ for i, layer in enumerate(networks):
     
     # net = theanets.recurrent.Regressor([1, layer, 1])
     
-    numix = 3
     # kw = dict(inputs={"%s:out" % name: 64}, size=numix)
-    kw = dict(inputs={"hid1:out": layer["size"]}, size=numix)
-    outkw = dict(inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix}, size=numix*3)
-    # net = theanets.recurrent.Regressor([1, layer, 1])
-    net = theanets.recurrent.MixtureDensity([1, layer,
-                                        dict(name="mu", activation="linear", **kw),
-                                        dict(name="sig", activation="exp", **kw),
-                                        dict(name="pi", activation="softmax", **kw),
-                                        # dict(name="out", activation="linear", **outkw)
-                                        ])
-                                        # dict(size=3 * numix, inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix})])# , loss="nll")
-    net.set_loss("nll", mu_name="mu", sig_name="sig", pi_name="pi", numcomp=numix)
+    if args.mode == "mse":
+        net = theanets.recurrent.Regressor([1, layer, 1])
+    elif args.mode == "mdn":
+        numix = 3
+        kw = dict(inputs={"hid1:out": layer["size"]}, size=numix)
+        outkw = dict(inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix}, size=numix*3)
+        net = theanets.recurrent.MixtureDensity([1, layer,
+                                       dict(name="mu", activation="linear", **kw),
+                                       dict(name="sig", activation="exp", **kw),
+                                       dict(name="pi", activation="softmax", **kw),
+                                       # dict(name="out", activation="linear", **outkw)
+                                       ])
+                                       # dict(size=3 * numix, inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix})])# , loss="nll")
+        net.set_loss("nll", mu_name="mu", sig_name="sig", pi_name="pi", numcomp=numix)
     
     losses = []
     #"""
     # for tm, _ in net.itertrain([ZERO, WAVES],
+    algo = args.optimizer
+    # algo="rmsprop",
+    # algo = "adagrad",
+    # algo = "adadelta",
+    # algo = "adam",
+    # algo = "rprop",
+    # algo = "esgd",
+    # algo = "sgd",
+    # algo = "nag", # nope
+    
     print("INPUT.shape, WAVES.shape", INPUT.shape, WAVES.shape)
     for tm, _ in net.itertrain([INPUT, WAVES],
                                monitor_gradients=True,
                                batch_size=BATCH_SIZE,
-                               algo="rmsprop",
-                               # algo = "adagrad",
-                               # algo = "adadelta",
-                               # algo = "adam",
-                               # algo = "rprop",
-                               # algo = "esgd",
-                               # algo = "sgd",
-                               # algo = "nag", # nope
+                               algo=algo,
                                learning_rate=0.0001,
                                 momentum=0.9,
                               # nesterov=True,
