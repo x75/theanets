@@ -121,7 +121,7 @@ class Autoencoder(graph.Network):
         super(Autoencoder, self).__init__(layers, rng=rng)
         self.set_loss(form=loss, target=self.inputs[0], weighted=weighted)
 
-    def encode(self, x, layer=None, sample=False):
+    def encode(self, x, layer=None, sample=False, **kwargs):
         '''Encode a dataset using the hidden layer activations of our network.
 
         Parameters
@@ -146,12 +146,12 @@ class Autoencoder(graph.Network):
             The given dataset, encoded by the appropriate hidden layer
             activation.
         '''
-        enc = self.feed_forward(x)[self._find_output(layer)]
+        enc = self.feed_forward(x, **kwargs)[self._find_output(layer)]
         if sample:
             return np.random.binomial(n=1, p=enc).astype(np.uint8)
         return enc
 
-    def decode(self, z, layer=None):
+    def decode(self, z, layer=None, **kwargs):
         '''Decode an encoded dataset by computing the output layer activation.
 
         Parameters
@@ -168,7 +168,8 @@ class Autoencoder(graph.Network):
         '''
         key = self._find_output(layer)
         if key not in self._functions:
-            outputs, updates = self.build_graph()
+            regs = regularizers.from_kwargs(self, **kwargs)
+            outputs, updates = self.build_graph(regs)
             self._functions[key] = theano.function(
                 [outputs[key]],
                 [outputs[self.layers[-1].output_name()]],
@@ -205,7 +206,7 @@ class Autoencoder(graph.Network):
             layer = layer.output_name()
         return layer
 
-    def score(self, x, w=None):
+    def score(self, x, w=None, **kwargs):
         '''Compute R^2 coefficient of determination for a given input.
 
         Parameters
@@ -222,7 +223,7 @@ class Autoencoder(graph.Network):
             input. This can serve as one measure of the information loss of the
             autoencoder.
         '''
-        return super(Autoencoder, self).score(x, x, w=w)
+        return super(Autoencoder, self).score(x, x, w=w, **kwargs)
 
 
 class Regressor(graph.Network):
@@ -409,9 +410,11 @@ class Classifier(graph.Network):
     DEFAULT_OUTPUT_ACTIVATION = 'softmax'
     '''Default activation for the output layer.'''
 
+    OUTPUT_NDIM = 1
+    '''Number of dimensions for holding output data arrays.'''
+
     def __init__(self, layers, loss='xe', weighted=False, rng=13):
-        super(Classifier, self).__init__(layers, rng=rng)
-        self.set_loss(form=loss, target=1, weighted=weighted)
+        super(Classifier, self).__init__(layers, loss=loss, weighted=weighted, rng=rng)
 
     def monitors(self, **kwargs):
         '''Return expressions that should be computed to monitor training.
@@ -426,7 +429,7 @@ class Classifier(graph.Network):
         outputs, _ = self.build_graph(regs)
         return monitors + [('acc', self.losses[0].accuracy(outputs))]
 
-    def predict(self, x):
+    def predict(self, x, **kwargs):
         '''Compute a greedy classification for the given set of data.
 
         Parameters
@@ -440,14 +443,15 @@ class Classifier(graph.Network):
         k : ndarray (num-examples, )
             A vector of class index values, one per row of input data.
         '''
-        return self.feed_forward(x)[self.layers[-1].output_name()].argmax(axis=-1)
+        outputs = self.feed_forward(x, **kwargs)
+        return outputs[self.layers[-1].output_name()].argmax(axis=-1)
 
-    def classify(self, x):
+    def classify(self, x, **kwargs):
         warnings.warn('please use predict() instead of classify()',
                       DeprecationWarning)
-        return self.predict(x)
+        return self.predict(x, **kwargs)
 
-    def predict_proba(self, x):
+    def predict_proba(self, x, **kwargs):
         '''Compute class posterior probabilities for the given set of data.
 
         Parameters
@@ -462,9 +466,9 @@ class Classifier(graph.Network):
             An array of class posterior probability values, one per row of input
             data.
         '''
-        return self.feed_forward(x)[self.layers[-1].output_name()]
+        return self.feed_forward(x, **kwargs)[self.layers[-1].output_name()]
 
-    def predict_logit(self, x):
+    def predict_logit(self, x, **kwargs):
         '''Compute the logit values that underlie the softmax output.
 
         Parameters
@@ -479,9 +483,9 @@ class Classifier(graph.Network):
             An array of posterior class logit values, one row of logit values
             per row of input data.
         '''
-        return self.feed_forward(x)[self.layers[-1].output_name('pre')]
+        return self.feed_forward(x, **kwargs)[self.layers[-1].output_name('pre')]
 
-    def score(self, x, y, w=None):
+    def score(self, x, y, w=None, **kwargs):
         '''Compute the mean accuracy on a set of labeled data.
 
         Parameters
@@ -499,7 +503,7 @@ class Classifier(graph.Network):
         score : float
             The (possibly weighted) mean accuracy of the model on the data.
         '''
-        eq = y == self.predict(x)
+        eq = y == self.predict(x, **kwargs)
         if w is not None:
             return (w * eq).sum() / w.sum()
         return eq.mean()
