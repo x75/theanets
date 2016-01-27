@@ -324,8 +324,9 @@ class MixtureDensity(Regressor):
                 mus[b,i] = mu[b,i]
                 sigs[b,i] = sig[b,i]
                 pis[b,i] = pi[b,i]
+                # print("pimax", pimax, mu, sig)
                 y[b,i] = np.random.normal(mu[b,i,pimax], sig[b,i,pimax])
-        print("b", b, "i", i)
+        print("b", b, "i", i, pi, mu, sig)
 
         # import matplotlib.pylab as pl
         # pl.subplot(311)

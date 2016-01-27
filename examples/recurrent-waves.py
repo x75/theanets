@@ -49,13 +49,13 @@ BATCH_SIZE = args.batch_size
 
 extendo = 1
 # NUMDATAPTS = 8192
-# NUMDATAPTS = 1000
-NUMDATAPTS = 256 * extendo
+NUMDATAPTS = 1024
+# NUMDATAPTS = 256 * extendo
 
 # Construct a complex sine wave as a sum of pure-frequency waves.
 TWOPI = 2 * np.pi
 TAU = TWOPI * extendo
-T = np.linspace(0, TAU, NUMDATAPTS)
+T = np.linspace(0, TAU*4, NUMDATAPTS)
 SIN = sum(c * np.sin(TWOPI * f * T) for c, f in ((2, 1.5), (3, 1.8), (4, 1.1)))
 SIN /= np.max(SIN)
 
@@ -149,9 +149,11 @@ for i, layer in enumerate(networks):
     # net = theanets.recurrent.Regressor([1, layer, 1])
     
     # kw = dict(inputs={"%s:out" % name: 64}, size=numix)
-    if args.mode == "mse":
+    if args.mode == "using MSE output":
+        print("using MDN mode")
         net = theanets.recurrent.Regressor([1, layer, 1])
     elif args.mode == "mdn":
+        print("using MDN output")
         numix = 3
         kw = dict(inputs={"hid1:out": layer["size"]}, size=numix)
         outkw = dict(inputs={"mu:out": numix, "sig:out": numix, "pi:out": numix}, size=numix*3)
@@ -198,7 +200,7 @@ for i, layer in enumerate(networks):
     net.save("recurrent_waves_net_%s" % name)
     
     # freerunning
-    freerun_steps = 256 * 1 # extendo
+    freerun_steps = 500 * 1 # extendo
     prd2 = np.zeros((freerun_steps-1, 1), dtype=np.float32)
     inp = np.concatenate((INPUT[0], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
     print("inp.dtype", inp.dtype)
@@ -217,7 +219,7 @@ for i, layer in enumerate(networks):
         # print("inp.dtype", inp.dtype)
     prd2 = outp[0].copy()
     print("prd2.shape", prd2.shape)
-    freerun_ax.plot(prd2, label="%s" % name, alpha=0.7, color=COLORS[i])
+    freerun_ax.plot(prd2, label="%s prd fr" % name, alpha=0.7, color=COLORS[i])
     freerun_ax.plot(inp, "--", label="%s" % name, alpha=0.2, color=COLORS[i])
     # freerun_ax.plot(outp.flatten(), "ko", label="%s" % name, alpha=0.7, color=COLORS[i])
 
