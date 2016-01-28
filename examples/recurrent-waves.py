@@ -20,8 +20,7 @@ parameters. The other layer models fall somewhere in the middle but tend only to
 match the dominant frequency in the target wave.
 '''
 
-import os
-import argparse
+import os, time, argparse
 import climate
 import logging
 import matplotlib.pyplot as pl
@@ -135,8 +134,8 @@ networks = [
     # dict(form='scrn', activation='linear'),
     # dict(form='gru', activation='relu'),
     # dict(form='lstm', activation='tanh'),
-    dict(form='clockwork', activation='tanh', periods=(1, 4, 16, 64)),
-    # dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 64)),
+    # dict(form='clockwork', activation='tanh', periods=(1, 4, 16, 64)),
+    dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 64)),
 ]
 
 # networks = [
@@ -146,7 +145,11 @@ networks = [
 for i, layer in enumerate(networks):
     print("layer",layer)
     name = layer['form']
-    layer['size'] = 124 # 64
+    layer['size'] = 300 # 64
+    # check size for clockwork partitioning
+    if layer["form"] == "clockwork":
+        layer["size"] = (layer["size"]//len(layer["periods"]))*len(layer["periods"])
+        print("cw adjust", layer["size"])
     # layer['size'] = 64
     logging.info('training %s model', name)
     
@@ -195,8 +198,8 @@ for i, layer in enumerate(networks):
                                batch_size=BATCH_SIZE,
                                algo=algo,
                                learning_rate=0.0001,
-                                momentum=0.9,
-                              # nesterov=True,
+                               momentum=0.9,
+                               nesterov=True,
                                min_improvement=0.01): #, save_progress="recurrent_waves_{}", save_every=100):
             losses.append(tm['loss'])
         # save network
@@ -214,7 +217,7 @@ for i, layer in enumerate(networks):
     
     # freerunning, maintaining state?
     # print("net state", net.cell)
-    freerun_steps = 500 * 1 # extendo
+    freerun_steps = 200 * 1 # extendo
     prd2 = np.zeros((freerun_steps-1, 1), dtype=np.float32)
     inp = np.concatenate((INPUT[0], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
     print("inp.dtype", inp.dtype)
@@ -225,9 +228,11 @@ for i, layer in enumerate(networks):
         bi = freerun_steps-j
         print("bi = %d" % bi)
         rinp = inp[np.newaxis,0:-bi]
+        now = time.time()
         outp = net.predict(rinp)
+        took = time.time() - now
         # print("outp.dtype", outp.dtype)
-        print("%d, inp.shape, rinp.shape, outp.shape" % j, inp.shape, rinp.shape, outp.shape, outp[0].shape)
+        print("pred time = %f, %d, inp.shape, rinp.shape, outp.shape" % (took, j), inp.shape, rinp.shape, outp.shape, outp[0].shape)
         # prd2[j,:] = outp[0,-1]
         inp[-(freerun_steps-j)] = outp[0,-1] # prd2[j,:].reshape((1,1,1))
         # print("inp.dtype", inp.dtype)
@@ -253,6 +258,7 @@ for ax in [wave_ax, learn_ax]:
 wave_ax.set_ylabel('Amplitude')
 wave_ax.set_xlabel('Time')
 
+learn_ax.set_yscale('log')
 learn_ax.set_ylabel('Loss')
 learn_ax.set_xlabel('Training Epoch')
 learn_ax.grid(True)
