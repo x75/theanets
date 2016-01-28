@@ -20,6 +20,7 @@ parameters. The other layer models fall somewhere in the middle but tend only to
 match the dominant frequency in the target wave.
 '''
 
+import os
 import argparse
 import climate
 import logging
@@ -33,6 +34,7 @@ import sys
 # arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("-m", "--mode", type=str, default="mse", help="mse or mdn")
+parser.add_argument("-w", "--weights", type=str, default="recurrent_waves_net_lstm", help="modelfile to load")
 parser.add_argument("-o", "--optimizer", type=str, default="rmsprop", help="rmsprop, adagrad, adadelta, adam, rprop, esgd, sgd, nag")
 parser.add_argument("-bs", "--batch_size", type=int, default=2)
 
@@ -57,6 +59,7 @@ TWOPI = 2 * np.pi
 TAU = TWOPI * extendo
 T = np.linspace(0, TAU*4, NUMDATAPTS)
 SIN = sum(c * np.sin(TWOPI * f * T) for c, f in ((2, 1.5), (3, 1.8), (4, 1.1)))
+# SIN = sum(c * np.sin(TWOPI * f * T) for c, f in ((2, 1.5), (3, 2.8), (4, 3.1)))
 SIN /= np.max(SIN)
 
 # Create an input dataset consisting of all zeros, and an output dataset
@@ -119,7 +122,8 @@ print("T.shape, WAVES.shape", T.shape, WAVES.shape)
 # Plot the target wave.
 # wave_ax.plot(T, SIN, ':', label='Target', alpha=0.7, color='#111111')
 # wave_ax.plot(T, ds[0][0], ':', label='Target', alpha=0.7, color='#111111')
-wave_ax.plot(T, WAVES[0], ':', label='Target', alpha=0.7, color='#111111')
+# wave_ax.plot(T, WAVES[0], ':', label='Target', alpha=0.7, color='#111111')
+wave_ax.plot(WAVES[0], ':', label='Target', alpha=0.7, color='#111111')
 
 
 # For each layer type, train a model containing that layer, and plot its
@@ -130,8 +134,8 @@ networks = [
     # dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
     # dict(form='scrn', activation='linear'),
     # dict(form='gru', activation='relu'),
-    dict(form='lstm', activation='tanh'),
-    # dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)),
+    # dict(form='lstm', activation='tanh'),
+    dict(form='clockwork', activation='tanh', periods=(1, 4, 16, 64)),
     # dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 64)),
 ]
 
@@ -142,15 +146,15 @@ networks = [
 for i, layer in enumerate(networks):
     print("layer",layer)
     name = layer['form']
-    # layer['size'] = 126 # 64
-    layer['size'] = 64
+    layer['size'] = 124 # 64
+    # layer['size'] = 64
     logging.info('training %s model', name)
     
     # net = theanets.recurrent.Regressor([1, layer, 1])
     
     # kw = dict(inputs={"%s:out" % name: 64}, size=numix)
-    if args.mode == "using MSE output":
-        print("using MDN mode")
+    if args.mode == "mse":
+        print("using MSE mode")
         net = theanets.recurrent.Regressor([1, layer, 1])
     elif args.mode == "mdn":
         print("using MDN output")
@@ -180,7 +184,13 @@ for i, layer in enumerate(networks):
     # algo = "nag", # nope
     
     print("INPUT.shape, WAVES.shape", INPUT.shape, WAVES.shape)
-    for tm, _ in net.itertrain([INPUT, WAVES],
+
+    
+    if os.path.exists(args.weights):
+        net = theanets.graph.Network.load(args.weights)
+    else:
+    
+        for tm, _ in net.itertrain([INPUT, WAVES],
                                monitor_gradients=True,
                                batch_size=BATCH_SIZE,
                                algo=algo,
@@ -188,18 +198,22 @@ for i, layer in enumerate(networks):
                                 momentum=0.9,
                               # nesterov=True,
                                min_improvement=0.01): #, save_progress="recurrent_waves_{}", save_every=100):
-        losses.append(tm['loss'])
+            losses.append(tm['loss'])
+        # save network
+        net.save("recurrent_waves_net_%s" % name)
     # """
     # net = net.load("recurrent_waves_net_rnn")
     # prd = net.predict(ZERO)
     prd = net.predict(INPUT)
+    # print("net state", net.layers[1].cell)
     print("prd.shape", prd.shape)
-    wave_ax.plot(T, prd[0, :, 0].flatten(), label=name, alpha=0.7, color=COLORS[i])
+    # wave_ax.plot(T, prd[0, :, 0].flatten(), label=name, alpha=0.7, color=COLORS[i])
+    wave_ax.plot(prd[0, :, 0].flatten(), label=name, alpha=0.7, color=COLORS[i])
     learn_ax.plot(losses, label=name, alpha=0.7, color=COLORS[i])
 
-    net.save("recurrent_waves_net_%s" % name)
     
-    # freerunning
+    # freerunning, maintaining state?
+    # print("net state", net.cell)
     freerun_steps = 500 * 1 # extendo
     prd2 = np.zeros((freerun_steps-1, 1), dtype=np.float32)
     inp = np.concatenate((INPUT[0], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
