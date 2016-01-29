@@ -43,9 +43,11 @@ def from_kwargs(graph, **kwargs):
         If this is a dict, its contents will be added to the other keyword
         arguments passed in.
 
-    rng : Theano RandomStreams, optional
-        If provided, this random number generator will be used for dropout and
-        noise. Defaults to creating a new generator.
+    rng : int or theano RandomStreams, optional
+        If an integer is provided, it will be used to seed the random number
+        generators for the dropout or noise regularizers. If a theano
+        RandomStreams object is provided, it will be used directly. Defaults to
+        13.
 
     input_dropout : float, optional
         Apply dropout to input layers in the network graph, with this dropout
@@ -85,9 +87,7 @@ def from_kwargs(graph, **kwargs):
 
     regs = []
 
-    rng = kwargs.get('rng')
-    if not isinstance(rng, RandomStreams):
-        rng = None
+    rng = kwargs.get('rng', 13)
 
     def pattern(ls):
         return tuple(l.output_name() for l in ls)
@@ -256,8 +256,7 @@ class WeightL2(Regularizer):
     __extra_registration_keys__ = ['weight_l2', 'weight_decay']
 
     def loss(self, layers, outputs):
-        pattern = self.pattern or '*'  # default pattern matches everything.
-        matches = util.params_matching(layers, pattern)
+        matches = util.params_matching(layers, self.pattern or '*')
         variables = [var for _, var in matches if var.ndim > 1]
         if not variables:
             return 0
@@ -320,8 +319,7 @@ class WeightL1(Regularizer):
     __extra_registration_keys__ = ['weight_l1', 'weight_sparsity']
 
     def loss(self, layers, outputs):
-        pattern = self.pattern or '*'  # default pattern matches everything.
-        matches = util.params_matching(layers, pattern)
+        matches = util.params_matching(layers, self.pattern or '*')
         variables = [var for _, var in matches if var.ndim > 1]
         if not variables:
             return 0
@@ -389,16 +387,144 @@ class HiddenL1(Regularizer):
     __extra_registration_keys__ = ['hidden_l1', 'hidden_sparsity']
 
     def loss(self, layers, outputs):
-        pattern = self.pattern
-        if pattern is None:
-            # default pattern matches output from "middle" layers.
-            ns = [l.output_name() for l in layers[1:-1]]
-            pattern = ns[0] if len(ns) == 1 else '{' + ','.join(ns) + '}'
+        pattern = self.pattern or [l.output_name() for l in layers[1:-1]]
         matches = util.outputs_matching(outputs, pattern)
         hiddens = [expr for _, expr in matches]
         if not hiddens:
             return 0
         return sum(abs(h).mean() for h in hiddens) / len(hiddens)
+
+
+class RecurrentNorm(Regularizer):
+    r'''Penalize successive activation norms of recurrent layers.
+
+    Notes
+    -----
+
+    This regularizer implements the :func:`loss` method to add the following
+    term to a recurrent network's loss function:
+
+    .. math::
+        \frac{1}{T|\Omega|} \sum_{i \in \Omega} \sum_{t=1}^T
+          \left( \|Z_i^t\|_2^2 - \|Z_i^{t-1}\|_2^2 \right)^2
+
+    where :math:`\Omega` is a set of "matching" graph output indices, and the
+    squared L2 norm :math`\|\cdot\|_2^2` is the sum of the squares of the
+    elements in the corresponding array.
+
+    This regularizer encourages the norms of the hidden state activations in a
+    recurrent layer to remain constant over time.
+
+    Examples
+    --------
+
+    This regularizer can be specified at training or test time by providing the
+    ``recurrent_norm`` keyword argument:
+
+    >>> net = theanets.Regression(...)
+
+    To use this regularizer at training time:
+
+    >>> net.train(..., recurrent_norm=0.1)
+
+    By default all recurrent layer outputs are penalized. To include only some
+    graph outputs:
+
+    >>> net.train(..., recurrent_norm=dict(weight=0.1, pattern='hid3:out'))
+
+    To use this regularizer when running the model forward to generate a
+    prediction:
+
+    >>> net.predict(..., recurrent_norm=0.1)
+
+    The value associated with the keyword argument can be a scalar---in which
+    case it provides the weight for the regularizer---or a dictionary, in which
+    case it will be passed as keyword arguments directly to the constructor.
+
+    References
+    ----------
+
+    .. [Kru15] D. Krueger & R. Memisevic. (ICLR 2016?) "Regularizing RNNs by
+       Stabilizing Activations." http://arxiv.org/abs/1511.08400
+    '''
+
+    __extra_registration_keys__ = ['recurrent_norm']
+
+    def loss(self, layers, outputs):
+        if self.pattern is None:
+            raise util.ConfigurationError('RecurrentNorm requires a pattern!')
+        matches = util.outputs_matching(outputs, self.pattern)
+        hiddens = [expr for _, expr in matches if expr.ndim == 3]
+        if not hiddens:
+            return 0
+        norms = ((e * e).sum(axis=-1) for e in hiddens)
+        deltas = ((e[:, :-1] - e[:, 1:]).mean() for e in norms)
+        return sum(deltas) / len(hiddens)
+
+
+class RecurrentState(Regularizer):
+    r'''Penalize state changes of recurrent layers.
+
+    Notes
+    -----
+
+    This regularizer implements the :func:`loss` method to add the following
+    term to a recurrent network's loss function:
+
+    .. math::
+        \frac{1}{T|\Omega|} \sum_{i \in \Omega} \sum_{t=1}^T
+          \| Z_i^t - Z_i^{t-1} \|_2^2
+
+    where :math:`\Omega` is a set of "matching" graph output indices, and the
+    squared L2 norm :math`\|\cdot\|_2^2` is the sum of the squares of the
+    elements in the corresponding array.
+
+    This regularizer tends to encourage the hidden state activations in a
+    recurrent layer to remain constant over time. Deviations from a constant
+    state thus require "evidence" from the loss.
+
+    Examples
+    --------
+
+    This regularizer can be specified at training or test time by providing the
+    ``recurrent_state`` keyword argument:
+
+    >>> net = theanets.Regression(...)
+
+    To use this regularizer at training time:
+
+    >>> net.train(..., recurrent_state=0.1)
+
+    By default all recurrent layer outputs are penalized. To include only some
+    graph outputs:
+
+    >>> net.train(..., recurrent_state=dict(weight=0.1, pattern='hid3:out'))
+
+    To use this regularizer when running the model forward to generate a
+    prediction:
+
+    >>> net.predict(..., recurrent_state=0.1)
+
+    The value associated with the keyword argument can be a scalar---in which
+    case it provides the weight for the regularizer---or a dictionary, in which
+    case it will be passed as keyword arguments directly to the constructor.
+
+    References
+    ----------
+
+    '''
+
+    __extra_registration_keys__ = ['recurrent_state']
+
+    def loss(self, layers, outputs):
+        if self.pattern is None:
+            raise util.ConfigurationError('RecurrentNorm requires a pattern!')
+        matches = util.outputs_matching(outputs, pattern)
+        hiddens = [expr for _, expr in matches if expr.ndim == 3]
+        if not hiddens:
+            return 0
+        deltas = (e[:, :-1] - e[:, 1:] for e in hiddens)
+        return sum((d * d).mean() for d in deltas) / len(hiddens)
 
 
 class Contractive(Regularizer):
@@ -483,11 +609,7 @@ class Contractive(Regularizer):
                      self.pattern, self.wrt)
 
     def loss(self, layer_list, outputs):
-        pattern = self.pattern
-        if pattern is None:
-            # default pattern matches output from "middle" layers.
-            ns = [l.output_name() for l in layer_list[1:-1]]
-            pattern = ns[0] if len(ns) == 1 else '{' + ','.join(ns) + '}'
+        pattern = self.pattern or [l.output_name() for l in layer_list[1:-1]]
         targets = [expr for _, expr in util.outputs_matching(outputs, pattern)]
         if not targets:
             return 0
@@ -579,9 +701,9 @@ class GaussianNoise(Regularizer):
        http://oucsace.cs.ohiou.edu/~razvan/courses/dl6900/papers/vincent08.pdf
     '''
 
-    def __init__(self, pattern='*:out', weight=0., rng=None):
+    def __init__(self, pattern='*:out', weight=0., rng=13):
         super(GaussianNoise, self).__init__(pattern=pattern, weight=weight)
-        self.rng = RandomStreams() if rng is None else rng
+        self.rng = RandomStreams(rng) if isinstance(rng, int) else rng
 
     def log(self):
         '''Log some diagnostic info about this regularizer.'''
@@ -597,6 +719,9 @@ class GaussianNoise(Regularizer):
 
 class BernoulliDropout(Regularizer):
     r'''Randomly set activations of a layer output to zero.
+
+    Parameters
+    ----------
 
     rng : Theano random number generator, optional
         A Theano random number generator to use for creating noise and dropout
@@ -671,9 +796,9 @@ class BernoulliDropout(Regularizer):
        co-adaptation of feature detectors." http://arxiv.org/pdf/1207.0580.pdf
     '''
 
-    def __init__(self, pattern='*:out', weight=0., rng=None):
+    def __init__(self, pattern='*:out', weight=0., rng=13):
         super(BernoulliDropout, self).__init__(pattern=pattern, weight=weight)
-        self.rng = RandomStreams() if rng is None else rng
+        self.rng = RandomStreams(rng) if isinstance(rng, int) else rng
 
     def log(self):
         '''Log some diagnostic info about this regularizer.'''
@@ -682,6 +807,7 @@ class BernoulliDropout(Regularizer):
 
     def modify_graph(self, outputs):
         for name, expr in list(util.outputs_matching(outputs, self.pattern)):
-            outputs[name + '-predrop'] = expr
-            outputs[name] = expr * self.rng.binomial(
+            noise = self.rng.binomial(
                 size=expr.shape, n=1, p=1-self.weight, dtype=util.FLOAT)
+            outputs[name + '-predrop'] = expr
+            outputs[name] = expr * noise / self.weight

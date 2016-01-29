@@ -80,6 +80,9 @@ class Network(object):
     INPUT_NDIM = 2
     '''Number of dimensions for holding input data arrays.'''
 
+    OUTPUT_NDIM = 2
+    '''Number of dimensions for holding output data arrays.'''
+
     def __init__(self, layers=(), loss='mse', weighted=False, rng=13):
         self._graphs = {}     # cache of symbolic computation graphs
         self._functions = {}  # cache of callable feedforward functions
@@ -94,7 +97,7 @@ class Network(object):
         if loss and self.layers:
             self.set_loss(loss,
                           weighted=weighted,
-                          target=self.INPUT_NDIM,
+                          target=self.OUTPUT_NDIM,
                           output_name=self.layers[-1].output_name())
 
     def add_layer(self, layer=None, is_output=False, **kwargs):
@@ -572,7 +575,7 @@ class Network(object):
         '''
         return self.feed_forward(x, **kwargs)[self.layers[-1].output_name()]
 
-    def score(self, x, y, w=None):
+    def score(self, x, y, w=None, **kwargs):
         '''Compute R^2 coefficient of determination for a given labeled input.
 
         Parameters
@@ -592,7 +595,7 @@ class Network(object):
             The R^2 correlation between the prediction of this netork and its
             target output.
         '''
-        u = y - self.predict(x)
+        u = y - self.predict(x, **kwargs)
         v = y - y.mean()
         if w is None:
             w = np.ones_like(u)
