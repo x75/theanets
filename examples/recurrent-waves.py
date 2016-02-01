@@ -192,7 +192,6 @@ for i, layer in enumerate(networks):
     if os.path.exists(args.weights):
         net = theanets.graph.Network.load(args.weights)
     else:
-
         net.train([INPUT, WAVES], learning_rate=0.0001, algo="rmsprop")    
         for tm, _ in net.itertrain([INPUT, WAVES],
                                monitor_gradients=True,
