@@ -17,6 +17,22 @@ def generate():
     return [rng.randn(TIME, BATCH_SIZE, 3).astype('f')]
 
 
+def generate2():
+    (wavrate, wavdata) = wavfile.read("drinksonus44.wav")
+
+    wavdata = np.atleast_2d(wavdata[300000:400000])
+    # wavdata = wavdata.reshape((1, wavdata.shape[0], wavdata.shape[1]))
+    print("wavdata.shape", wavdata.shape)
+
+    # patch_size = (64, 1)
+    # data = extract_patches_2d(wavdata[:,:], patch_size, max_patches=None)
+    # data = data.reshape(data.shape[0], -1)
+    wavlen = wavdata.shape[1]
+    chunklen = BATCH_SIZE
+    numchunks = wavlen/chunklen
+    data = wavdata[0,:numchunks*chunklen].reshape((TIME, chunklen, numchunks))
+    return data
+
 def main_ae_1(args):
     e = theanets.Experiment(
         theanets.recurrent.Autoencoder,
@@ -39,7 +55,9 @@ def main_ae_1(args):
         learning_rate=0.0001,
         momentum=0.9,
         nesterov=True,
-        min_improvement=0.01): #, save_progress="recurrent_waves_{}", save_every=100):
+        min_improvement=0.01,
+        hidden_l1=0.1,
+        ): #, save_progress="recurrent_waves_{}", save_every=100):
         losses.append(tm['loss'])
 
     # t, v = e.train(generate)
@@ -53,7 +71,7 @@ def main_ae_1(args):
 def main_ae_2(args):
     model = theanets.recurrent.Autoencoder([10, (20, 'rnn'), 10])
     inputs = np.random.randn(1000, 100, 10).astype('f')
-    
+
     # t, v = model.train([inputs], learning_rate=0.0001, momentum=0.1)
     t, v = model.train([inputs], learning_rate=0.0001, algo="adadelta")
     losses = []
@@ -97,7 +115,9 @@ def batches_from_wav(batch_size, seqlen, dim=1):
             
 def main_ae_3(args):
     dim = 1
-    form = "clockwork"
+    # form = "clockwork"
+    # form = "rnn"
+    form = "gru"
     activation = "tanh"
     seqlen = 4410
     inputs = batches_from_wav(BATCH_SIZE, seqlen)
@@ -117,17 +137,17 @@ def main_ae_3(args):
         # model = theanets.recurrent.Autoencoder([dim, (40, 'rnn'), (20, 'rnn'), (40, 'rnn'), dim])
         # layer_h_1 = dict(form=form, activation=activation, size=100)
         # layer_h_2 = dict(form=form, activation=activation, size=40)
-        # layer_h_3 = dict(form=form, activation=activation, size=20)
-        layer_h_1 = dict(form=form, activation=activation, size=100, periods=[1, 2, 4, 8])
-        layer_h_2 = dict(form=form, activation=activation, size=40, periods=[8, 16, 32, 64])
-        layer_h_3 = dict(form=form, activation=activation, size=20, periods=[64, 128])
+        layer_h_3 = dict(form=form, activation=activation, size=20)
+        # layer_h_1 = dict(form=form, activation=activation, size=100, periods=[1, 2, 4, 8])
+        # layer_h_2 = dict(form=form, activation=activation, size=40, periods=[8, 16, 32, 64])
+        # layer_h_3 = dict(form=form, activation=activation, size=20, periods=[64, 128])
         model = theanets.recurrent.Autoencoder([
             1, #         theanets.layers.base.Input(size=1, name="In"),
-            layer_h_1,
-            layer_h_2,
+            # layer_h_1,
+            # layer_h_2,
             layer_h_3,
-            layer_h_2,
-            layer_h_1,
+            # layer_h_2,
+            # layer_h_1,
             1
             ])
         # t, v = model.train([inputs], learning_rate=0.0001, momentum=0.1)
@@ -136,11 +156,13 @@ def main_ae_3(args):
             monitor_gradients=True,
             batch_size=BATCH_SIZE,
             algo="rmsprop",
-            learning_rate=0.00001,
+            learning_rate=0.001,
             momentum=0.9,
             nesterov=True,
             max_updates=1000,
-            min_improvement=0.01): #, save_progress="recurrent_waves_{}", save_every=100):
+            min_improvement=0.01,
+            hidden_l1=0.1 # sparseness
+            ): #, save_progress="recurrent_waves_{}", save_every=100):
             losses.append(tm['loss'])
 
         # print t
