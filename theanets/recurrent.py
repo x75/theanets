@@ -294,6 +294,9 @@ class Regressor(feedforward.Regressor):
     INPUT_NDIM = 3
     '''Number of dimensions for holding input data arrays.'''
 
+    OUTPUT_NDIM = 3
+    '''Number of dimensions for holding output data arrays.'''
+
 class MixtureDensity(Regressor):
     def predict(self, x):
         '''Compute a greedy classification for the given set of data.
