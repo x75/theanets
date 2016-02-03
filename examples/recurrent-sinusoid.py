@@ -68,7 +68,7 @@ for i, layer in enumerate((
     dict(form='gru', activation='relu'),
     dict(form='lstm', activation='tanh'),
     # dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)), # 64
-    dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 32, 64, 128)),
+    dict(form='clockwork', activation='tanh', periods=(1, 2, 4, 8, 16, 32, 64, 128)),
     )):
     name = layer['form']
     layer['size'] = 256

@@ -28,11 +28,12 @@ import numpy as np
 import theanets
 import sys
 
-# from smp.datasets import wavdataset
+from smp.datasets import wavdataset
 
 # arguments
 parser = argparse.ArgumentParser()
-parser.add_argument("-m", "--mode", type=str, default="mse", help="mse or mdn")
+parser.add_argument("-m", "--mode", type=str, default="mse", help="mse, mae, or mdn")
+parser.add_argument("-ms", "--modelsize", type=int, default=100)
 parser.add_argument("-w", "--weights", type=str, default="recurrent_waves_net_lstm", help="modelfile to load")
 parser.add_argument("-o", "--optimizer", type=str, default="rmsprop", help="rmsprop, adagrad, adadelta, adam, rprop, esgd, sgd, nag")
 parser.add_argument("-bs", "--batch_size", type=int, default=2)
@@ -75,17 +76,17 @@ print("T.shape, SIN.shape, ZERO.shape, WAVES_SIN.shape", T.shape, SIN.shape, ZER
 
 # ################################################################################
 # # load wave data #2
-# ds = wavdataset(
-#     sample_len = len(T), # 7*441,
-#     n_samples = 1,
-#     filename = "../../smp/playground/sequence/drinksonus44.wav")
+ds = wavdataset(
+    sample_len = len(T), # 7*441,
+    n_samples = 1,
+    filename = "../../smp/playground/sequence/drinksonus44.wav")
 # print("len(ds)", len(ds))
 # print("len(ds[0][0])", len(ds[0][0]))
 
 # # print("ds[0][0].shape, SIN.shape", ds[1][0].shape, SIN.shape)
 
 # # WAVES_WAV = np.concatenate([ds[0][0][None, :]] * BATCH_SIZE, axis=0).astype('f')
-# WAVES_WAV = np.array(ds[:])[:,0,:,:].astype(np.float32)
+WAVES_WAV = np.array(ds[:])[:,0,:,:].astype(np.float32)
 # print("WAVES_WAV.shape", WAVES_WAV.shape)
 
 WAVES = WAVES_SIN.copy()
@@ -129,12 +130,12 @@ wave_ax.plot(WAVES[0], ':', label='Target', alpha=0.7, color='#111111')
 # predicted output.
 
 networks = [
-    # dict(form='rnn', activation='tanh', diagonal=0.5),
-    # dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
-    # dict(form='scrn', activation='linear'),
-    # dict(form='gru', activation='relu'),
-    # dict(form='lstm', activation='tanh'),
-    # dict(form='clockwork', activation='tanh', periods=(1, 4, 16, 64)),
+    dict(form='rnn', activation='tanh', diagonal=0.5),
+    dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
+    dict(form='scrn', activation='linear'),
+    dict(form='gru', activation='relu'),
+    dict(form='lstm', activation='tanh'),
+    dict(form='clockwork', activation='tanh', periods=(1, 4, 16, 64)),
     dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 64)),
 ]
 
@@ -158,7 +159,10 @@ for i, layer in enumerate(networks):
     # kw = dict(inputs={"%s:out" % name: 64}, size=numix)
     if args.mode == "mse":
         print("using MSE mode")
-        net = theanets.recurrent.Regressor([1, layer, 1])
+        net = theanets.recurrent.Regressor([1, layer, 1], loss="mse")
+    elif args.mode == "mae":
+        print("using MAE mode")
+        net = theanets.recurrent.Regressor([1, layer, 1], loss="mae")
     elif args.mode == "mdn":
         print("using MDN output")
         numix = 3
@@ -192,7 +196,7 @@ for i, layer in enumerate(networks):
     if os.path.exists(args.weights):
         net = theanets.graph.Network.load(args.weights)
     else:
-        net.train([INPUT, WAVES], learning_rate=0.0001, algo="rmsprop")    
+        # net.train([INPUT, WAVES], learning_rate=0.0001, algo="rmsprop")    
         for tm, _ in net.itertrain([INPUT, WAVES],
                                monitor_gradients=True,
                                batch_size=BATCH_SIZE,
@@ -258,10 +262,15 @@ for ax in [wave_ax, learn_ax]:
 wave_ax.set_ylabel('Amplitude')
 wave_ax.set_xlabel('Time')
 
-learn_ax.set_yscale('log')
+if args.mode != "mdn":
+    learn_ax.set_yscale('log')
 learn_ax.set_ylabel('Loss')
 learn_ax.set_xlabel('Training Epoch')
 learn_ax.grid(True)
 
 pl.legend()
+
+pl.gcf().set_size_inches(18, 12)
+pl.gcf().savefig("recurrent-waves-H%d_%s.pdf" % (args.modelsize, args.mode), dpi=300, bbox_inches="tight")
+
 pl.show()
