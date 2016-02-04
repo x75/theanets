@@ -211,6 +211,7 @@ for i, layer in enumerate(networks):
     # """
     # net = net.load("recurrent_waves_net_rnn")
     # prd = net.predict(ZERO)
+    # standard predict
     prd = net.predict(INPUT)
     # print("net state", net.layers[1].cell)
     print("prd.shape", prd.shape)
@@ -218,8 +219,7 @@ for i, layer in enumerate(networks):
     wave_ax.plot(prd[0, :, 0].flatten(), label=name, alpha=0.7, color=COLORS[i])
     learn_ax.plot(losses, label=name, alpha=0.7, color=COLORS[i])
 
-    
-    # freerunning, maintaining state?
+    # freerunning, maintaining state? nope
     # print("net state", net.cell)
     freerun_steps = 200 * 1 # extendo
     prd2 = np.zeros((freerun_steps-1, 1), dtype=np.float32)
@@ -233,6 +233,7 @@ for i, layer in enumerate(networks):
         print("bi = %d" % bi)
         rinp = inp[np.newaxis,0:-bi]
         now = time.time()
+        # single timestep predict
         outp = net.predict(rinp)
         took = time.time() - now
         # print("outp.dtype", outp.dtype)
