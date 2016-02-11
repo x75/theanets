@@ -37,6 +37,10 @@ TAU = 2 * np.pi
 T = np.linspace(0, TAU, 256)
 SIN = sum(c * np.sin(TAU * f * T) for c, f in ((2, 1.5), (3, 1.8), (4, 1.1)))
 
+import pylab as pl
+pl.plot(SIN)
+pl.show()
+
 # SIN = np.vstack((SIN, SIN)).T
 # print SIN.shape
 
@@ -68,10 +72,10 @@ for i, layer in enumerate((
     dict(form='gru', activation='relu'),
     dict(form='lstm', activation='tanh'),
     # dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)), # 64
-    dict(form='clockwork', activation='tanh', periods=(1, 2, 4, 8, 16, 32, 64, 128)),
+    dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 32, 64, 128)),
     )):
     name = layer['form']
-    layer['size'] = 256
+    layer['size'] = 64
     logging.info('training %s model', name)
     # numix = 3
     # kw = dict(inputs={"%s:out" % name: 64}, size=numix)
@@ -88,7 +92,7 @@ for i, layer in enumerate((
     for tm, _ in net.itertrain([ZERO, WAVES],
                                monitor_gradients=True,
                                batch_size=BATCH_SIZE,
-                               algorithm="adagrad", # 'rmsprop',
+                               algorithm='rmsprop', # "adagrad"
                                learning_rate=0.0001,
                                momentum=0.9,
                                min_improvement=0.01):
