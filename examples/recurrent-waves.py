@@ -79,7 +79,7 @@ print("T.shape, SIN.shape, ZERO.shape, WAVES_SIN.shape", T.shape, SIN.shape, ZER
 ds = wavdataset(
     sample_len = len(T), # 7*441,
     n_samples = 1,
-    filename = "../../smp/playground/sequence/drinksonus44.wav")
+    filename = "../../smp/playground/sequence/data/mso3i.wav")
 # print("len(ds)", len(ds))
 # print("len(ds[0][0])", len(ds[0][0]))
 
@@ -89,8 +89,8 @@ ds = wavdataset(
 WAVES_WAV = np.array(ds[:])[:,0,:,:].astype(np.float32)
 # print("WAVES_WAV.shape", WAVES_WAV.shape)
 
-WAVES = WAVES_SIN.copy()
-# WAVES = WAVES_WAV.copy()
+# WAVES = WAVES_SIN.copy()
+WAVES = WAVES_WAV.copy()
 
 INPUT = np.roll(WAVES, 1, axis=1)# * 0.1
 
@@ -130,12 +130,12 @@ wave_ax.plot(WAVES[0], ':', label='Target', alpha=0.7, color='#111111')
 # predicted output.
 
 networks = [
-    dict(form='rnn', activation='tanh', diagonal=0.5),
-    dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
-    dict(form='scrn', activation='linear'),
-    dict(form='gru', activation='relu'),
-    dict(form='lstm', activation='tanh'),
-    dict(form='clockwork', activation='tanh', periods=(1, 4, 16, 64)),
+    # dict(form='rnn', activation='tanh', diagonal=0.5),
+    # dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
+    # dict(form='scrn', activation='linear'),
+    # dict(form='gru', activation='relu'),
+    # dict(form='lstm', activation='tanh'),
+    # dict(form='clockwork', activation='tanh', periods=(1, 4, 16, 64)),
     dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 64)),
 ]
 
@@ -146,7 +146,7 @@ networks = [
 for i, layer in enumerate(networks):
     print("layer",layer)
     name = layer['form']
-    layer['size'] = 300 # 64
+    layer['size'] = args.modelsize # 300 # 64
     # check size for clockwork partitioning
     if layer["form"] == "clockwork":
         layer["size"] = (layer["size"]//len(layer["periods"]))*len(layer["periods"])
@@ -204,7 +204,8 @@ for i, layer in enumerate(networks):
                                learning_rate=0.0001,
                                momentum=0.9,
                                nesterov=True,
-                               min_improvement=0.01): #, save_progress="recurrent_waves_{}", save_every=100):
+                               patience = 30,
+                               min_improvement=0.001): #, save_progress="recurrent_waves_{}", save_every=100):
             losses.append(tm['loss'])
         # save network
         net.save("recurrent_waves_net_%s" % name)
