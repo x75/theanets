@@ -32,11 +32,13 @@ from smp.datasets import wavdataset
 
 # arguments
 parser = argparse.ArgumentParser()
-parser.add_argument("-m", "--mode", type=str, default="mse", help="mse, mae, or mdn")
-parser.add_argument("-ms", "--modelsize", type=int, default=100)
-parser.add_argument("-w", "--weights", type=str, default="recurrent_waves_net_lstm", help="modelfile to load")
-parser.add_argument("-o", "--optimizer", type=str, default="rmsprop", help="rmsprop, adagrad, adadelta, adam, rprop, esgd, sgd, nag")
+parser.add_argument("-a", "--activation", type=str, default="tanh", help="Activation function: tanh|linear|relu|sigmoid|... [tanh]")
 parser.add_argument("-bs", "--batch_size", type=int, default=2)
+parser.add_argument("-m", "--mode", type=str, default="mse", help="mse, mae, or mdn [mse]")
+parser.add_argument("-ms", "--modelsize", type=int, default=100)
+parser.add_argument("-o", "--optimizer", type=str, default="rmsprop", help="rmsprop, adagrad, adadelta, adam, rprop, esgd, sgd, nag [rmsprop]")
+parser.add_argument("-t", "--target", type=str, default="sin", help="Target type: sin|wav [sin]")
+parser.add_argument("-w", "--weights", type=str, default="recurrent_waves_net_lstm", help="modelfile to load [recurrent_waves_net_lstm]")
 
 args = parser.parse_args()
 
@@ -89,8 +91,14 @@ ds = wavdataset(
 WAVES_WAV = np.array(ds[:])[:,0,:,:].astype(np.float32)
 # print("WAVES_WAV.shape", WAVES_WAV.shape)
 
-# WAVES = WAVES_SIN.copy()
-WAVES = WAVES_WAV.copy()
+# select target
+if args.target == "sin":
+    WAVES = WAVES_SIN.copy()
+elif args.target == "wav":
+    WAVES = WAVES_WAV.copy()
+else:
+    print("unknown target %s" % args.target)
+    sys.exit()
 
 INPUT = np.roll(WAVES, 1, axis=1)# * 0.1
 
@@ -129,14 +137,16 @@ wave_ax.plot(WAVES[0], ':', label='Target', alpha=0.7, color='#111111')
 # For each layer type, train a model containing that layer, and plot its
 # predicted output.
 
+activation = args.activation
+
 networks = [
-    # dict(form='rnn', activation='tanh', diagonal=0.5),
-    # dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
-    # dict(form='scrn', activation='linear'),
-    # dict(form='gru', activation='relu'),
-    # dict(form='lstm', activation='tanh'),
-    # dict(form='clockwork', activation='tanh', periods=(1, 4, 16, 64)),
-    dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 64)),
+    dict(form='rnn', activation=activation, diagonal=0.5),
+    dict(form='rrnn', activation=activation, rate='vector', diagonal=0.5),
+    dict(form='scrn', activation=activation),
+    dict(form='gru', activation=activation),
+    dict(form='lstm', activation=activation),
+    dict(form='clockwork', activation=activation, periods=(1, 2, 4, 8, 16, 64)),
+    dict(form='clockwork', activation=activation, periods=(1, 2, 4, 8, 16, 64)),
 ]
 
 # networks = [
@@ -245,7 +255,8 @@ for i, layer in enumerate(networks):
     prd2 = outp[0].copy()
     print("prd2.shape", prd2.shape)
     freerun_ax.plot(prd2, label="%s prd fr" % name, alpha=0.7, color=COLORS[i])
-    freerun_ax.plot(inp, "--", label="%s" % name, alpha=0.2, color=COLORS[i])
+    if i == 0: # add target only once
+        freerun_ax.plot(inp, "--", label="%s" % name, alpha=0.2, color=COLORS[i])
     # freerun_ax.plot(outp.flatten(), "ko", label="%s" % name, alpha=0.7, color=COLORS[i])
 
 np.save("input.npy", INPUT[0])
@@ -273,6 +284,6 @@ learn_ax.grid(True)
 pl.legend()
 
 pl.gcf().set_size_inches(18, 12)
-pl.gcf().savefig("recurrent-waves-H%d_%s.pdf" % (args.modelsize, args.mode), dpi=300, bbox_inches="tight")
+pl.gcf().savefig("recurrent-waves-H%d_%s_%s.pdf" % (args.modelsize, args.mode), dpi=300, bbox_inches="tight")
 
 pl.show()

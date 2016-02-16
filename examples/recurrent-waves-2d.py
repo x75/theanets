@@ -65,7 +65,7 @@ SIN = [c * np.sin(TWOPI * f * T) for c, f in cfs] # , (4, 1.1))]
 # SIN = sum(c * np.sin(TWOPI * f * T) for c, f in ((2, 1.5), (3, 2.8), (4, 3.1)))
 SIN /= np.max(SIN)
 
-SIN = np.load("../../smp/playground/sequence/sparse_coeffs.npy").T
+SIN = np.load("../../smp/playground/sequence/sparse_coeffs.npy")[:10000].T
 
 print(SIN.shape, SIN[None, :, None].shape)
 
@@ -211,9 +211,11 @@ for i, layer in enumerate(networks):
                                monitor_gradients=True,
                                batch_size=BATCH_SIZE,
                                algo=algo,
-                               learning_rate=0.0001,
-                               momentum=0.9,
-                               nesterov=True,
+                               learning_rate=0.00001,
+                               momentum=0.8,
+                               nesterov=False,
+                               max_gradient_norm = 5.,
+                               max_gradient_elem = 1.,
                                patience = 5,
                                min_improvement=0.01,
                                weight_l2 = 0.5,
