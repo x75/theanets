@@ -30,6 +30,9 @@ import sys
 
 from smp.datasets import wavdataset
 
+# timestamp
+timestamp = time.strftime("%Y%m%d-%H%M%S")
+
 # arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("-a", "--activation", type=str, default="tanh", help="Activation function: tanh|linear|relu|sigmoid|... [tanh]")
@@ -38,7 +41,7 @@ parser.add_argument("-m", "--mode", type=str, default="mse", help="mse, mae, or 
 parser.add_argument("-ms", "--modelsize", type=int, default=100)
 parser.add_argument("-o", "--optimizer", type=str, default="rmsprop", help="rmsprop, adagrad, adadelta, adam, rprop, esgd, sgd, nag [rmsprop]")
 parser.add_argument("-t", "--target", type=str, default="sin", help="Target type: sin|wav [sin]")
-parser.add_argument("-w", "--weights", type=str, default="recurrent_waves_net_lstm", help="modelfile to load [recurrent_waves_net_lstm]")
+parser.add_argument("-w", "--weights", type=str, default=None, help="modelfile to load [recurrent_waves_net_lstm]")
 
 args = parser.parse_args()
 
@@ -81,7 +84,7 @@ print("T.shape, SIN.shape, ZERO.shape, WAVES_SIN.shape", T.shape, SIN.shape, ZER
 ds = wavdataset(
     sample_len = len(T), # 7*441,
     n_samples = 1,
-    filename = "../../smp/playground/sequence/data/mso3i.wav")
+    filename = "../../smp/playground/sequence/data/music.wav")
 # print("len(ds)", len(ds))
 # print("len(ds[0][0])", len(ds[0][0]))
 
@@ -104,25 +107,28 @@ INPUT = np.roll(WAVES, 1, axis=1)# * 0.1
 
 print("INPUT.shape", INPUT.shape)
 
-pl.subplot(311)
-pl.title("SIN")
-pl.plot(SIN)
-# pl.plot(T)
-pl.subplot(312)
-pl.title("WAVES / INPUT")
-pl.plot(WAVES[:,:,0].T)# + np.array((0.1, 0.2)))
-pl.plot(INPUT[:,:,0].T)# + np.array((0.1, 0.2)))
-pl.subplot(313)
-pl.title("INPUT")
-pl.plot(INPUT[:,:,0].T) # + np.array((0.1, 0.2)))
-pl.show()
+# pl.subplot(311)
+# pl.title("SIN")
+# pl.plot(SIN)
+# # pl.plot(T)
+# pl.subplot(312)
+# pl.title("WAVES / INPUT")
+# pl.plot(WAVES[:,:,0].T)# + np.array((0.1, 0.2)))
+# pl.plot(INPUT[:,:,0].T)# + np.array((0.1, 0.2)))
+# pl.subplot(313)
+# pl.title("INPUT")
+# pl.plot(INPUT[:,:,0].T) # + np.array((0.1, 0.2)))
+# pl.show()
 
 # sys.exit()
 
 
 
 # Set up plotting axes to show the output result and learning curves.
-_, (wave_ax, learn_ax, freerun_ax) = pl.subplots(3, 1)
+if args.weights != None:
+    _, (wave_ax, freerun_ax) = pl.subplots(2, 1)
+else:
+    _, (wave_ax, learn_ax, freerun_ax) = pl.subplots(3, 1)
 # _, (wave_ax, learn_ax) = pl.subplots(2, 1)
 
 print("T.shape, WAVES.shape", T.shape, WAVES.shape)
@@ -146,7 +152,7 @@ networks = [
     dict(form='gru', activation=activation),
     dict(form='lstm', activation=activation),
     dict(form='clockwork', activation=activation, periods=(1, 2, 4, 8, 16, 64)),
-    dict(form='clockwork', activation=activation, periods=(1, 2, 4, 8, 16, 64)),
+    # dict(form='clockwork', activation=activation, periods=(1, 2, 4, 8, 16, 64)),
 ]
 
 # networks = [
@@ -203,8 +209,10 @@ for i, layer in enumerate(networks):
     print("INPUT.shape, WAVES.shape", INPUT.shape, WAVES.shape)
 
     
-    if os.path.exists(args.weights):
-        net = theanets.graph.Network.load(args.weights)
+    if args.weights != None and os.path.exists(args.weights + "_%s" % name):
+        # thats kinda defunct in the loop over different models, thus all predictions are the same
+        print("loading model %s" % (args.weights + "_%s" % name))
+        net = theanets.graph.Network.load(args.weights + "_%s" % name)
     else:
         # net.train([INPUT, WAVES], learning_rate=0.0001, algo="rmsprop")    
         for tm, _ in net.itertrain([INPUT, WAVES],
@@ -214,11 +222,12 @@ for i, layer in enumerate(networks):
                                learning_rate=0.0001,
                                momentum=0.9,
                                nesterov=True,
-                               patience = 30,
-                               min_improvement=0.001): #, save_progress="recurrent_waves_{}", save_every=100):
+                               patience = 10,
+                               min_improvement=0.01): #, save_progress="recurrent_waves_{}", save_every=100):
             losses.append(tm['loss'])
         # save network
-        net.save("recurrent_waves_net_%s" % name)
+        net.save("recurrent-waves/recurrent_waves_net_%s_%s" % (timestamp, name))
+        np.save("recurrent-waves/recurrent_waves_losses_%s_%s" % (timestamp, name), np.asarray(losses))
     # """
     # net = net.load("recurrent_waves_net_rnn")
     # prd = net.predict(ZERO)
@@ -228,27 +237,30 @@ for i, layer in enumerate(networks):
     print("prd.shape", prd.shape)
     # wave_ax.plot(T, prd[0, :, 0].flatten(), label=name, alpha=0.7, color=COLORS[i])
     wave_ax.plot(prd[0, :, 0].flatten(), label=name, alpha=0.7, color=COLORS[i])
-    learn_ax.plot(losses, label=name, alpha=0.7, color=COLORS[i])
+    if args.weights == None:
+        learn_ax.plot(losses, label=name, alpha=0.7, color=COLORS[i])
 
     # freerunning, maintaining state? nope
     # print("net state", net.cell)
     freerun_steps = 200 * 1 # extendo
     prd2 = np.zeros((freerun_steps-1, 1), dtype=np.float32)
-    inp = np.concatenate((INPUT[0], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
+    # inp = np.concatenate((INPUT[0], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
+    inp = np.concatenate((INPUT[0,:-freerun_steps], np.zeros((freerun_steps, 1), dtype=np.float32))) # prd[0,-1,:].reshape((1,1,1))
+    inpc = INPUT[0].copy()
     print("inp.dtype", inp.dtype)
     print("inp.shape", inp.shape)
     # outp = net.predict(inp)
     # print("inp.shape, outp.shape", inp.shape, outp.shape, outp[0].shape)
     for j in range(freerun_steps-1):
         bi = freerun_steps-j
-        print("bi = %d" % bi)
+        # print("bi = %d" % bi)
         rinp = inp[np.newaxis,0:-bi]
         now = time.time()
         # single timestep predict
         outp = net.predict(rinp)
         took = time.time() - now
         # print("outp.dtype", outp.dtype)
-        print("pred time = %f, %d, inp.shape, rinp.shape, outp.shape" % (took, j), inp.shape, rinp.shape, outp.shape, outp[0].shape)
+        print("pred time = %f, %d/%d, inp.shape = %s, rinp.shape = %s, outp.shape = %s, outp[0].shape = %s" % (took, bi, j, inp.shape, rinp.shape, outp.shape, outp[0].shape))
         # prd2[j,:] = outp[0,-1]
         inp[-(freerun_steps-j)] = outp[0,-1] # prd2[j,:].reshape((1,1,1))
         # print("inp.dtype", inp.dtype)
@@ -256,7 +268,7 @@ for i, layer in enumerate(networks):
     print("prd2.shape", prd2.shape)
     freerun_ax.plot(prd2, label="%s prd fr" % name, alpha=0.7, color=COLORS[i])
     if i == 0: # add target only once
-        freerun_ax.plot(inp, "--", label="%s" % name, alpha=0.2, color=COLORS[i])
+        freerun_ax.plot(inpc, "--", label="target", alpha=0.2, color=COLORS[i])
     # freerun_ax.plot(outp.flatten(), "ko", label="%s" % name, alpha=0.7, color=COLORS[i])
 
 np.save("input.npy", INPUT[0])
@@ -264,7 +276,11 @@ np.save("prd.npy", prd[0, :, 0].flatten())
 np.save("prd2.npy", prd2)
         
 # Make the plots look nice.
-for ax in [wave_ax, learn_ax]:
+if args.weights == None:
+    niceaxes = [wave_ax, learn_ax]
+else:
+    niceaxes = [wave_ax]
+for ax in niceaxes:
     ax.xaxis.tick_bottom()
     ax.yaxis.tick_left()
     ax.spines['top'].set_color('none')
@@ -275,15 +291,16 @@ for ax in [wave_ax, learn_ax]:
 wave_ax.set_ylabel('Amplitude')
 wave_ax.set_xlabel('Time')
 
-if args.mode != "mdn":
-    learn_ax.set_yscale('log')
-learn_ax.set_ylabel('Loss')
-learn_ax.set_xlabel('Training Epoch')
-learn_ax.grid(True)
+if args.weights == None:
+    if args.mode != "mdn":
+        learn_ax.set_yscale('log')
+    learn_ax.set_ylabel('Loss')
+    learn_ax.set_xlabel('Training Epoch')
+    learn_ax.grid(True)
 
-pl.legend()
+pl.legend(loc="upper center", bbox_to_anchor=(0.5, 1.05), ncol=3, fontsize=8)
 
 pl.gcf().set_size_inches(18, 12)
-pl.gcf().savefig("recurrent-waves-H%d_%s_%s.pdf" % (args.modelsize, args.mode), dpi=300, bbox_inches="tight")
+pl.gcf().savefig("recurrent-waves-H%d_%s_%s_%s_%s_%s.pdf" % (args.modelsize, args.mode, args.activation, args.target, args.optimizer, timestamp), dpi=300, bbox_inches="tight")
 
 pl.show()

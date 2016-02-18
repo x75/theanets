@@ -326,7 +326,12 @@ class MixtureDensity(Regressor):
         
         for b in range(y.shape[0]): # loop batches
             for i in range(y.shape[1]): # loop time
-                pimax = np.random.multinomial(1, pi[b,i]).argmax(axis=-1)
+                try:
+                    pimax = np.random.multinomial(1, pi[b,i]).argmax(axis=-1)
+                except Exception, e:
+                    print e
+                    y[b,i] = 0
+                    continue 
                 mus[b,i] = mu[b,i]
                 sigs[b,i] = sig[b,i]
                 pis[b,i] = pi[b,i]
