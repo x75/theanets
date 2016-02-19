@@ -146,11 +146,11 @@ wave_ax.plot(WAVES[0], ':', label='Target', alpha=0.7, color='#111111')
 activation = args.activation
 
 networks = [
-    dict(form='rnn', activation=activation, diagonal=0.5),
-    dict(form='rrnn', activation=activation, rate='vector', diagonal=0.5),
-    dict(form='scrn', activation=activation),
-    dict(form='gru', activation=activation),
-    dict(form='lstm', activation=activation),
+    # dict(form='rnn', activation=activation, diagonal=0.5),
+    # dict(form='rrnn', activation=activation, rate='vector', diagonal=0.5),
+    # dict(form='scrn', activation=activation),
+    # dict(form='gru', activation=activation),
+    # dict(form='lstm', activation=activation),
     dict(form='clockwork', activation=activation, periods=(1, 2, 4, 8, 16, 64)),
     # dict(form='clockwork', activation=activation, periods=(1, 2, 4, 8, 16, 64)),
 ]
