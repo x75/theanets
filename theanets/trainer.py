@@ -231,24 +231,34 @@ class SupervisedPretrainer(object):
         '''
         net = self.network
         original = list(net.layers)
-        output_name = original[-1].output_name()
+        output_name = original[-1].output_name
         tied = any(isinstance(l, layers.Tied) for l in original)
         L = 1 + len(original) // 2 if tied else len(original) - 1
         for i in range(1, L):
+            tail = []
             if i == L - 1:
                 net.layers = original
             elif tied:
-                net.layers = original[:i+1] + original[-i:]
+                net.layers = original[:i+1]
+                for j in range(i):
+                    prev = tail[-1] if tail else net.layers[-1]
+                    tail.append(layers.Layer.build(
+                        'tied', partner=original[i-j].name, inputs=prev.name))
+                net.layers = original[:i+1] + tail
             else:
-                net.layers = original[:i+1] + [layers.Layer.build(
+                tail.append(layers.Layer.build(
                     'feedforward',
                     name='lwout',
-                    inputs={original[i].output_name(): original[i].size},
+                    inputs=original[i].output_name,
                     size=original[-1].size,
-                    activation=original[-1].activation)]
+                    activation=original[-1].kwargs['activation']))
+                net.layers = original[:i+1] + tail
             logging.info('layerwise: training %s',
                          ' -> '.join(l.name for l in net.layers))
-            net.losses[0].output_name = net.layers[-1].output_name()
+            [l.resolve(net.layers) for l in net.layers]
+            [l.setup() for l in tail]
+            [l.log() for l in net.layers]
+            net.losses[0].output_name = net.layers[-1].output_name
             trainer = DownhillTrainer(self.algo, net)
             for monitors in trainer.itertrain(train, valid, **kwargs):
                 yield monitors
@@ -304,20 +314,26 @@ class UnsupervisedPretrainer(object):
         # construct a "shadow" of the input network, using the original
         # network's encoding layers, with tied weights in an autoencoder
         # configuration.
-        layers_ = list(self.network.layers[:-1])
-        for l in layers_[::-1][:-2]:
-            layers_.append(layers.Layer.build(
-                'tied', partner=l, activation=l.activation))
-        layers_.append(layers.Layer.build(
-            'tied', partner=layers_[1], activation='linear'))
+        layers_ = list(l.to_spec() for l in self.network.layers[:-1])
+        for i, l in enumerate(layers_[::-1][:-2]):
+            layers_.append(dict(
+                form='tied', partner=l['name'], activation=l['activation']))
+        layers_.append(dict(
+            form='tied', partner=layers_[1]['name'], activation='linear'))
 
         logging.info('creating shadow network')
         ae = feedforward.Autoencoder(layers=layers_)
-        ae.losses[0].output_name = layers_[-1].output_name()
 
         # train the autoencoder using the supervised layerwise pretrainer.
         pre = SupervisedPretrainer(self.algo, ae)
         for monitors in pre.itertrain(train, valid, **kwargs):
             yield monitors
+
+        # copy trained parameter values back to our original network.
+        for param in ae.params:
+            if not param.name.startswith('tied'):
+                l, p = param.name.split('.')
+                logging.info('copying pretrained parameter %s', param.name)
+                self.network.find(l, p).set_value(param.get_value())
 
         logging.info('completed unsupervised pretraining')

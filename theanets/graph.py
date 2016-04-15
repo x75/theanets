@@ -21,14 +21,6 @@ from . import util
 logging = climate.get_logger(__name__)
 
 
-class Error(Exception):
-    pass
-
-
-class LayerError(Error):
-    pass
-
-
 class Network(object):
     '''The network class encapsulates a network computation graph.
 
@@ -91,14 +83,14 @@ class Network(object):
         self.layers = []
         for i, layer in enumerate(layers):
             self.add_layer(layer=layer, is_output=i == len(layers) - 1)
-        logging.info('network has %d total parameters', self.num_params)
+        [l.bind(self) for l in self.layers]
 
         self.losses = []
         if loss and self.layers:
             self.set_loss(loss,
                           weighted=weighted,
                           target=self.OUTPUT_NDIM,
-                          output_name=self.layers[-1].output_name())
+                          output_name=self.layers[-1].output_name)
 
     def add_layer(self, layer=None, is_output=False, **kwargs):
         '''Add a :ref:`layer <layers>` to our network graph.
@@ -119,25 +111,7 @@ class Network(object):
             self.layers.append(layer)
             return
 
-        # here we set up some defaults for constructing a new layer.
-        form = 'feedforward' if self.layers else 'input'
-        if 'form' in kwargs:
-            form = kwargs.pop('form').lower()
-
-        kw = dict(size=layer)
-        if not self.layers:
-            kw['name'] = 'in'
-            kw['ndim'] = self.INPUT_NDIM
-        else:
-            kw['inputs'] = {self.layers[-1].output_name(): self.layers[-1].size}
-            kw['rng'] = self._rng
-            if is_output:
-                kw['activation'] = self.DEFAULT_OUTPUT_ACTIVATION
-                kw['name'] = 'out'
-            else:
-                kw['activation'] = 'relu'
-                kw['name'] = 'hid{}'.format(len(self.layers))
-        kw.update(kwargs)
+        form = kwargs.pop('form', 'ff' if self.layers else 'input').lower()
 
         # if layer is a tuple, assume that it contains one or more of the following:
         # - a layers.Layer subclass to construct (type)
@@ -151,66 +125,60 @@ class Network(object):
                         form = el.__name__
                 except TypeError:
                     pass
-                if isinstance(el, str):
+                if isinstance(el, util.basestring):
                     if layers.Layer.is_registered(el):
                         form = el
                     else:
-                        kw['activation'] = el
+                        kwargs['activation'] = el
                 if isinstance(el, int):
-                    kw['size'] = el
+                    kwargs['size'] = el
 
         # if layer is a dictionary, try to extract a form for the layer, and
         # override our default keyword arguments with the rest.
         if isinstance(layer, dict):
-            layer = dict(layer)
-            if 'form' in layer:
-                form = layer.pop('form').lower()
-            kw.update(layer)
-
-        # handle non-dict input specifications.
-        if 'inputs' in kw and not isinstance(kw['inputs'], dict):
-            inputs = kw['inputs']
-            if not isinstance(inputs, (tuple, list)):
-                inputs = (inputs, )
-            target = {}
-            for i in inputs:
-                name = i if ':' not in i else i.split(':', 1)[0]
-                try:
-                    layer = [l for l in self.layers if l.name == name][0]
-                except IndexError:
-                    raise LayerError('cannot find layer "{}"'.format(i))
-                target[layer.output_name()] = layer.size
-            kw['inputs'] = target
-
-        # look for a partner layer instance for creating a tied layer.
-        if isinstance(form, str) and form.lower() == 'tied':
-            partner = kw.get('partner')
-            if isinstance(partner, str):
-                # if the partner is named, just get that layer.
-                try:
-                    partner = [l for l in self.layers if l.name == partner][0]
-                except IndexError:
-                    raise LayerError('cannot find partner layer "{}"'.format(partner))
-            else:
-                # otherwise, we look backwards through our list of layers.
-                # any "tied" layer that we find increases a counter by one,
-                # and any "untied" layer decreases the counter by one. our
-                # partner is the first layer we find with count zero.
-                #
-                # this is intended to handle the hopefully common case of a
-                # (possibly deep) tied-weights autoencoder.
-                tied = 1
-                partner = None
-                for l in self.layers[::-1]:
-                    tied += 1 if isinstance(l, layers.Tied) else -1
-                    if tied == 0:
-                        partner = l
-                        break
+            for key, value in layer.items():
+                if key == 'form':
+                    form = value.lower()
                 else:
-                    raise LayerError('cannot find partner for "{}"'.format(layer))
-            kw['partner'] = partner
+                    kwargs[key] = value
 
-        layer = layers.Layer.build(form, **kw)
+        name = 'hid{}'.format(len(self.layers))
+        if is_output:
+            name = 'out'
+        if form == 'input':
+            name = 'in'
+        kwargs.setdefault('name', name)
+        kwargs.setdefault('size', layer)
+
+        if form == 'input':
+            kwargs.setdefault('ndim', self.INPUT_NDIM)
+        else:
+            act = self.DEFAULT_OUTPUT_ACTIVATION if is_output else 'relu'
+            kwargs.setdefault('inputs', self.layers[-1].output_name)
+            kwargs.setdefault('rng', self._rng)
+            kwargs.setdefault('activation', act)
+
+        if form.lower() == 'tied' and 'partner' not in kwargs:
+            # we look backward through our list of layers for a partner.
+            # any "tied" layer that we find increases a counter by one,
+            # and any "untied" layer decreases the counter by one. our
+            # partner is the first layer we find with count zero.
+            #
+            # this is intended to handle the hopefully common case of a
+            # (possibly deep) tied-weights autoencoder.
+            tied = 1
+            partner = None
+            for l in self.layers[::-1]:
+                tied += 1 if isinstance(l, layers.Tied) else -1
+                if tied == 0:
+                    partner = l.name
+                    break
+            else:
+                raise util.ConfigurationError(
+                    'cannot find partner for "{}"'.format(kwargs))
+            kwargs['partner'] = partner
+
+        layer = layers.Layer.build(form, **kwargs)
 
         if isinstance(layer, layers.Input):
             names = set(i.name for i in self.inputs)
@@ -239,8 +207,7 @@ class Network(object):
         if 'form' in kwargs:
             form = kwargs.pop('form').lower()
 
-        kw = dict(target=self.INPUT_NDIM,
-                  output_name=self.layers[-1].output_name())
+        kw = dict(target=self.INPUT_NDIM, output_name=self.layers[-1].output_name)
         kw.update(kwargs)
 
         if isinstance(loss, dict):
@@ -352,7 +319,7 @@ class Network(object):
                 algo = algo[0]
 
         # set up trainer ...
-        if isinstance(algo, str):
+        if isinstance(algo, util.basestring):
             algo = algo.lower()
             if algo == 'sample':
                 algo = trainer.SampleTrainer(self)
@@ -449,7 +416,7 @@ class Network(object):
                 loss.log()
             for reg in regularizers:
                 reg.log()
-            outputs = {i.name: i for i in self.inputs}
+            outputs = {}
             updates = []
             for layer in self.layers:
                 out, upd = layer.connect(outputs)
@@ -457,7 +424,6 @@ class Network(object):
                     reg.modify_graph(out)
                 outputs.update(out)
                 updates.extend(upd)
-                outputs['out'] = outputs[layer.output_name()]
             self._graphs[key] = outputs, updates
         return self._graphs[key]
 
@@ -482,11 +448,6 @@ class Network(object):
     def params(self):
         '''A list of the learnable Theano parameters for this network.'''
         return [p for l in self.layers for p in l.params]
-
-    @property
-    def num_params(self):
-        '''Number of parameters in the entire network model.'''
-        return sum(l.num_params for l in self.layers)
 
     def find(self, which, param):
         '''Get a parameter from a layer in the network.
@@ -573,7 +534,7 @@ class Network(object):
             Rows in this array correspond to examples, and columns to output
             variables.
         '''
-        return self.feed_forward(x, **kwargs)[self.layers[-1].output_name()]
+        return self.feed_forward(x, **kwargs)[self.layers[-1].output_name]
 
     def score(self, x, y, w=None, **kwargs):
         '''Compute R^2 coefficient of determination for a given labeled input.

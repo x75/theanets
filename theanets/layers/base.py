@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-r'''This module contains classes for different types of network layers.'''
+'''This module contains classes for different types of network layers.'''
 
 from __future__ import division
 
@@ -50,10 +50,11 @@ class Layer(util.Registrar(str('Base'), (), {})):
     ----------
     size : int
         Size of this layer.
-    inputs : dict or int
-        Size of input(s) to this layer. If one integer is provided, a single
-        input of the given size is expected. If a dictionary is provided, it
-        maps from output names to corresponding sizes.
+    inputs : str or tuple of str, optional
+        Name(s) of input(s) to this layer. These names must be
+        :func:`resolved <resolve>` to layers by :func:`binding <bind>` the layer
+        inside a :class:`network graph <theanets.graph.Network>`. Defaults to an
+        empty tuple; in practice this needs to be provided for most layers.
     name : str, optional
         The name of this layer. If not given, layers will be numbered
         sequentially based on the order in which they are created.
@@ -88,10 +89,8 @@ class Layer(util.Registrar(str('Base'), (), {})):
         Name of this layer.
     size : int
         Size of this layer.
-    inputs : dict
-        Dictionary mapping input names to their corresponding sizes.
-    activation : str
-        String representing the activation function for this layer.
+    inputs : tuple of str
+        Name(s) of input(s) to this layer.
     activate : callable
         The activation function to use on this layer's outputs.
     kwargs : dict
@@ -100,24 +99,28 @@ class Layer(util.Registrar(str('Base'), (), {})):
 
     _count = 0
 
-    def __init__(self, size, inputs, name=None, activation='relu', **kwargs):
-        Layer._count += 1
+    def __init__(self, size, inputs=(), name=None, **kwargs):
         super(Layer, self).__init__()
+
         self.size = size
-        self.inputs = inputs
-        if isinstance(self.inputs, int):
-            self.inputs = dict(out=self.inputs)
+        self.kwargs = kwargs
+        self._params = []
+
+        if isinstance(inputs, (tuple, list)):
+            self.inputs = tuple(inputs)
+        else:
+            self.inputs = (inputs, )
+        self._resolved_inputs = {}
+
+        Layer._count += 1
         self.name = name or '{}{}'.format(
             self.__class__.__name__.lower(), Layer._count)
+
         self.rng = kwargs.get('rng', kwargs.get('nrng'))
         if self.rng is None or isinstance(self.rng, int):
             self.rng = np.random.RandomState(self.rng)
-        self.activation = activation
-        self.activate = activations.build(activation, self)
-        self.kwargs = kwargs
-        self._params = []
-        self.setup()
-        self.log()
+
+        self.activate = activations.build(kwargs.get('activation', 'relu'), self)
 
     @property
     def params(self):
@@ -125,11 +128,17 @@ class Layer(util.Registrar(str('Base'), (), {})):
         return self._params + getattr(self.activate, 'params', [])
 
     @property
-    def num_params(self):
-        '''Total number of learnable parameters in this layer.'''
-        return sum(np.prod(p.get_value().shape) for p in self.params)
+    def output_name(self):
+        '''Full name of the default output for this layer.'''
+        return self.full_name('out')
 
-    def output_name(self, name='out'):
+    @property
+    def input_size(self):
+        '''For networks with one input, get the input size.'''
+        assert len(self.inputs) == 1
+        return self._resolved_inputs[self.inputs[0]].size
+
+    def full_name(self, name):
         '''Return a fully-scoped name for the given layer output.
 
         Parameters
@@ -170,7 +179,7 @@ class Layer(util.Registrar(str('Base'), (), {})):
             outputs = sorted(outputs.items())
         if isinstance(outputs, (TT.TensorVariable, SS.SparseVariable)):
             outputs = [('out', outputs)]
-        outs = {self.output_name(name): expr for name, expr in outputs}
+        outs = {self.full_name(name): expr for name, expr in outputs}
         return outs, updates
 
     def transform(self, inputs):
@@ -191,20 +200,74 @@ class Layer(util.Registrar(str('Base'), (), {})):
         '''
         raise NotImplementedError
 
+    def bind(self, graph, reset=True, initialize=True):
+        '''Bind this layer into a computation graph.
+
+        This method is a wrapper for performing common initialization tasks. It
+        calls :func:`resolve`, :func:`setup`, and :func:`log`.
+
+        Parameters
+        ----------
+        graph : :class:`Network <theanets.graph.Network>`
+            A computation network in which this layer is to be bound.
+        reset : bool, optional
+            If ``True`` (the default), reset the resolved layers for this layer.
+        initialize : bool, optional
+            If ``True`` (the default), initialize the parameters for this layer
+            by calling :func:`setup`.
+
+        Raises
+        ------
+        theanets.util.ConfigurationError :
+            If an input cannot be resolved.
+        '''
+        if reset:
+            self._resolved_inputs = {}
+        self.resolve(graph.layers)
+        if initialize:
+            self.setup()
+        self.log()
+
+    def resolve(self, layers):
+        '''Resolve the names of inputs for this layer into layer objects.
+
+        Parameters
+        ----------
+        layers : list of :class:`Layer`
+            A list of the layers that are available for resolving inputs.
+
+        Raises
+        ------
+        theanets.util.ConfigurationError :
+            If an input cannot be resolved.
+        '''
+        keys = []
+        for name in self.inputs:
+            matches = [l for l in layers if name.split(':')[0] == l.name]
+            if len(matches) != 1:
+                raise util.ConfigurationError(
+                    'layer "{}" cannot resolve input "{}" using {}'
+                    .format(self.name, name, [l.name for l in layers]))
+            full = name if ':' in name else matches[0].output_name
+            self._resolved_inputs[full] = matches[0]
+            keys.append(full)
+        self.inputs = tuple(keys)
+
     def setup(self):
         '''Set up the parameters and initial values for this layer.'''
         pass
 
     def log(self):
         '''Log some information about this layer.'''
-        inputs = ', '.join('({}){}'.format(n, s) for n, s in self.inputs.items())
+        inputs = ', '.join('({0}){1.size}'.format(n, l)
+                           for n, l in self._resolved_inputs.items())
         logging.info('layer %s "%s": %s -> %s, %s, %d parameters',
                      self.__class__.__name__,
                      self.name,
                      inputs,
                      self.size,
                      getattr(self.activate, 'name', self.activate),
-                     self.num_params)
+                     sum(np.prod(p.get_value().shape) for p in self.params))
 
     def _fmt(self, string):
         '''Helper method to format our name into a string.'''
@@ -215,13 +278,7 @@ class Layer(util.Registrar(str('Base'), (), {})):
     def _only_input(self, inputs):
         '''Helper method to retrieve our layer's sole input expression.'''
         assert len(self.inputs) == 1
-        return inputs[list(self.inputs)[0]]
-
-    @property
-    def input_size(self):
-        '''For networks with one input, get the input size.'''
-        assert len(self.inputs) == 1
-        return list(self.inputs.values())[0]
+        return inputs[self.inputs[0]]
 
     def find(self, key):
         '''Get a shared variable for a parameter by name.
@@ -319,7 +376,7 @@ class Layer(util.Registrar(str('Base'), (), {})):
             name=self.name,
             size=self.size,
             inputs=self.inputs,
-            activation=self.activation,
+            activation=self.kwargs.get('activation', 'relu'),
         )
         return spec
 
@@ -351,19 +408,17 @@ class Input(Layer):
         If ``sparse`` is enabled and ``ndim`` is not 2.
     '''
 
-    def __init__(self, size, name='in', ndim=2, sparse=False):
+    def __init__(self, size, name='in', ndim=2, sparse=False, **kwargs):
         self.input = util.FLOAT_CONTAINERS[ndim](name)
         if sparse is True or \
-           isinstance(sparse, str) and sparse.lower() == 'csr':
+           isinstance(sparse, util.basestring) and sparse.lower() == 'csr':
             assert ndim == 2, 'Theano only supports sparse arrays with 2 dims'
             self.input = SS.csr_matrix('input')
-        if isinstance(sparse, str) and sparse.lower() == 'csc':
+        if isinstance(sparse, util.basestring) and sparse.lower() == 'csc':
             assert ndim == 2, 'Theano only supports sparse arrays with 2 dims'
             self.input = SS.csc_matrix('input')
         super(Input, self).__init__(
-            size=size, name=name, inputs=0, activation='linear',
-            ndim=ndim, sparse=sparse,
-        )
+            size=size, name=name, activation='linear', ndim=ndim, sparse=sparse)
 
     def log(self):
         '''Log some information about this layer.'''
@@ -387,20 +442,7 @@ class Input(Layer):
         updates : list
             An empty updates list.
         '''
-        return inputs[self.input.name], []
-
-    def to_spec(self):
-        '''Create a specification for this layer.
-
-        Returns
-        -------
-        spec : int
-            A single integer specifying the size of this layer.
-        '''
-        spec = super(Input, self).to_spec()
-        del spec['inputs']
-        del spec['activation']
-        return spec
+        return self.input, []
 
 
 class Product(Layer):
@@ -438,11 +480,7 @@ class Product(Layer):
         updates : list of update pairs
             An empty sequence of updates.
         '''
-        keys = sorted(self.inputs)
-        out = inputs[keys.pop()]
-        for key in keys:
-            out *= inputs[key]
-        return dict(out=out), []
+        return dict(out=np.prod([inputs[k] for k in self.inputs])), []
 
 
 class Flatten(Layer):
@@ -528,7 +566,7 @@ class Concatenate(Layer):
             An empty sequence of updates.
         '''
         # using axis=-1 doesn't work with concatenate!
-        tensors = [inputs[k] for k in sorted(self.inputs)]
+        tensors = [inputs[k] for k in self.inputs]
         out = TT.concatenate(tensors, axis=tensors[0].ndim - 1)
         return dict(out=out), []
 

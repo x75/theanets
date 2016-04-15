@@ -1,165 +1,84 @@
 import numpy as np
+import pytest
 import theanets
 
-import util
+import util as u
+
+REG_LAYERS = [
+    u.NUM_INPUTS,
+    dict(size=u.NUM_HID1, form='conv2', filter_size=u.CNN.FILTER_SIZE),
+    dict(size=u.NUM_HID2, form='conv2', filter_size=u.CNN.FILTER_SIZE),
+    ('flat', u.NUM_HID2 *
+     (u.CNN.NUM_WIDTH - 2 * u.CNN.FILTER_WIDTH + 2) *
+     (u.CNN.NUM_HEIGHT - 2 * u.CNN.FILTER_HEIGHT + 2)),
+    u.NUM_OUTPUTS]
+
+CLF_LAYERS = [
+    u.NUM_INPUTS,
+    dict(size=u.NUM_HID1, form='conv2', filter_size=u.CNN.FILTER_SIZE),
+    dict(size=u.NUM_HID2, form='conv2', filter_size=u.CNN.FILTER_SIZE),
+    ('flat', u.NUM_HID2 *
+     (u.CNN.NUM_WIDTH - 2 * u.CNN.FILTER_WIDTH + 2) *
+     (u.CNN.NUM_HEIGHT - 2 * u.CNN.FILTER_HEIGHT + 2)),
+    u.NUM_CLASSES]
 
 
-class Base(util.Base):
-    NUM_WIDTH = 13
-    NUM_HEIGHT = 15
-    NUM_EXAMPLES = util.Base.NUM_EXAMPLES
-    NUM_INPUTS = util.Base.NUM_INPUTS
-    NUM_OUTPUTS = util.Base.NUM_OUTPUTS
-    NUM_CLASSES = util.Base.NUM_CLASSES
-
-    FILTER_WIDTH = 4
-    FILTER_HEIGHT = 3
-    FILTER_SIZE = (FILTER_WIDTH, FILTER_HEIGHT)
-
-    INPUTS = np.random.randn(
-        NUM_EXAMPLES, NUM_WIDTH, NUM_HEIGHT, NUM_INPUTS).astype('f')
-    INPUT_WEIGHTS = abs(np.random.randn(
-        NUM_EXAMPLES, NUM_WIDTH, NUM_HEIGHT, NUM_INPUTS)).astype('f')
-
-    def assert_shape(self, actual, expected):
-        if isinstance(expected, int):
-            expected = (expected, )
-        expected = (self.NUM_EXAMPLES, ) + tuple(expected)
-        assert actual == expected, 'expected {}, got {}'.format(expected, actual)
+def assert_shape(actual, width, height, channels):
+    assert actual == (u.NUM_EXAMPLES, width, height, channels)
 
 
-class TestRegressor(Base):
-    def _build(self, *hiddens):
-        hid = [dict(form='conv2', size=h, filter_size=self.FILTER_SIZE) for h in hiddens]
-        width = self.NUM_WIDTH - (self.FILTER_WIDTH - 1) * len(hiddens)
-        height = self.NUM_HEIGHT - (self.FILTER_HEIGHT - 1) * len(hiddens)
-        out = [('flatten', width * height * hiddens[-1]), self.NUM_OUTPUTS]
-        return theanets.convolution.Regressor([self.NUM_INPUTS] + hid + out)
-
-    def test_sgd(self):
-        hid = dict(size=10, form='conv2', filter_size=self.FILTER_SIZE)
-        w = self.NUM_WIDTH - (self.FILTER_WIDTH - 1)
-        h = self.NUM_HEIGHT - (self.FILTER_HEIGHT - 1)
-        flat = ('flatten', 10 * w * h)
-        self.exp = theanets.Experiment(
-            theanets.convolution.Regressor,
-            layers=(self.NUM_INPUTS, hid, flat, self.NUM_OUTPUTS))
-        self.assert_progress('sgd', [self.INPUTS, self.OUTPUTS])
-
-    def test_predict(self):
-        net = self._build(15, 13)
-        y = net.predict(self.INPUTS)
-        self.assert_shape(y.shape, self.NUM_OUTPUTS)
-
-    def test_feed_forward(self):
-        net = self._build(15, 13)
-        hs = net.feed_forward(self.INPUTS)
-        assert len(hs) == 10, 'got {}'.format(list(hs.keys()))
-        w = self.NUM_WIDTH
-        h = self.NUM_HEIGHT
-        self.assert_shape(hs['in:out'].shape, (w, h, self.NUM_INPUTS))
-        w -= self.FILTER_WIDTH - 1
-        h -= self.FILTER_HEIGHT - 1
-        self.assert_shape(hs['hid1:out'].shape, (w, h, 15))
-        w -= self.FILTER_WIDTH - 1
-        h -= self.FILTER_HEIGHT - 1
-        self.assert_shape(hs['hid2:out'].shape, (w, h, 13))
-        self.assert_shape(hs['hid3:out'].shape, w * h * 13)
-        self.assert_shape(hs['out:out'].shape, self.NUM_OUTPUTS)
+@pytest.mark.parametrize('Model, layers, weighted, data', [
+    (theanets.convolution.Regressor, REG_LAYERS, False, u.CNN.REG_DATA),
+    (theanets.convolution.Classifier, CLF_LAYERS, False, u.CNN.CLF_DATA),
+    (theanets.convolution.Regressor, REG_LAYERS, True, u.CNN.WREG_DATA),
+    (theanets.convolution.Classifier, CLF_LAYERS, True, u.CNN.WCLF_DATA),
+])
+def test_sgd(Model, layers, weighted, data):
+    u.assert_progress(Model(layers, weighted=weighted), data)
 
 
-class TestWeightedRegressor(TestRegressor):
-    def _build(self, *hiddens):
-        hid = [dict(form='conv2', size=h, filter_size=self.FILTER_SIZE) for h in hiddens]
-        width = self.NUM_WIDTH - (self.FILTER_WIDTH - 1) * len(hiddens)
-        height = self.NUM_HEIGHT - (self.FILTER_HEIGHT - 1) * len(hiddens)
-        out = [('flatten', width * height * hiddens[-1]), self.NUM_OUTPUTS]
-        return theanets.convolution.Regressor(
-            [self.NUM_INPUTS] + hid + out, weighted=True)
-
-    def test_sgd(self):
-        hid = dict(size=10, form='conv2', filter_size=self.FILTER_SIZE)
-        w = self.NUM_WIDTH - (self.FILTER_WIDTH - 1)
-        h = self.NUM_HEIGHT - (self.FILTER_HEIGHT - 1)
-        flat = ('flatten', 10 * w * h)
-        self.exp = theanets.Experiment(
-            theanets.convolution.Regressor,
-            layers=(self.NUM_INPUTS, hid, flat, self.NUM_OUTPUTS),
-            weighted=True)
-        self.assert_progress('sgd', [self.INPUTS, self.OUTPUTS, self.OUTPUT_WEIGHTS])
+@pytest.mark.parametrize('Model, layers, output', [
+    (theanets.convolution.Regressor, REG_LAYERS, u.NUM_OUTPUTS),
+    (theanets.convolution.Classifier, CLF_LAYERS, (u.NUM_EXAMPLES, )),
+])
+def test_predict(Model, layers, output):
+    u.assert_shape(Model(layers).predict(u.CNN.INPUTS).shape, output)
 
 
-class TestClassifier(Base):
-    def _build(self, *hiddens):
-        hid = [dict(form='conv2', size=h, filter_size=self.FILTER_SIZE) for h in hiddens]
-        width = self.NUM_WIDTH - (self.FILTER_WIDTH - 1) * len(hiddens)
-        height = self.NUM_HEIGHT - (self.FILTER_HEIGHT - 1) * len(hiddens)
-        out = [('flatten', width * height * hiddens[-1]), self.NUM_CLASSES]
-        return theanets.convolution.Classifier([self.NUM_INPUTS] + hid + out)
-
-    def test_sgd(self):
-        hid = dict(size=10, form='conv2', filter_size=self.FILTER_SIZE)
-        w = self.NUM_WIDTH - (self.FILTER_WIDTH - 1)
-        h = self.NUM_HEIGHT - (self.FILTER_HEIGHT - 1)
-        flat = ('flatten', 10 * w * h)
-        self.exp = theanets.Experiment(
-            theanets.convolution.Classifier,
-            layers=(self.NUM_INPUTS, hid, flat, self.NUM_CLASSES))
-        self.assert_progress('sgd', [self.INPUTS, self.CLASSES])
-
-    def test_predict_onelayer(self):
-        net = self._build(13)
-        z = net.predict(self.INPUTS)
-        self.assert_shape(z.shape, ())
-
-    def test_score_onelayer(self):
-        net = self._build(13)
-        z = net.score(self.INPUTS, self.CLASSES)
-        assert 0 < z < 1
-
-    def test_predict_proba_onelayer(self):
-        net = self._build(13)
-        z = net.predict_proba(self.INPUTS)
-        self.assert_shape(z.shape, self.NUM_CLASSES)
-
-    def test_predict_twolayer(self):
-        net = self._build(13, 14)
-        z = net.predict(self.INPUTS)
-        self.assert_shape(z.shape, ())
-
-    def test_feed_forward(self):
-        net = self._build(15, 13)
-        hs = net.feed_forward(self.INPUTS)
-        assert len(hs) == 10, 'got {}'.format(list(hs.keys()))
-        w = self.NUM_WIDTH
-        h = self.NUM_HEIGHT
-        self.assert_shape(hs['in:out'].shape, (w, h, self.NUM_INPUTS))
-        w -= self.FILTER_WIDTH - 1
-        h -= self.FILTER_HEIGHT - 1
-        self.assert_shape(hs['hid1:out'].shape, (w, h, 15))
-        w -= self.FILTER_WIDTH - 1
-        h -= self.FILTER_HEIGHT - 1
-        self.assert_shape(hs['hid2:out'].shape, (w, h, 13))
-        self.assert_shape(hs['hid3:out'].shape, w * h * 13)
-        self.assert_shape(hs['out:out'].shape, self.NUM_CLASSES)
+@pytest.mark.parametrize('Model, layers, target, score', [
+    (theanets.convolution.Regressor, REG_LAYERS, u.OUTPUTS, -16.850263595581055),
+    (theanets.convolution.Classifier, CLF_LAYERS, u.CLASSES, 0.171875),
+])
+def test_score(Model, layers, target, score):
+    assert Model(layers).score(u.CNN.INPUTS, target) == score
 
 
-class TestWeightedClassifier(TestClassifier):
-    def _build(self, *hiddens):
-        hid = [dict(form='conv2', size=h, filter_size=self.FILTER_SIZE) for h in hiddens]
-        width = self.NUM_WIDTH - (self.FILTER_WIDTH - 1) * len(hiddens)
-        height = self.NUM_HEIGHT - (self.FILTER_HEIGHT - 1) * len(hiddens)
-        out = [('flatten', width * height * hiddens[-1]), self.NUM_CLASSES]
-        return theanets.convolution.Classifier(
-            [self.NUM_INPUTS] + hid + out, weighted=True)
+@pytest.mark.parametrize('Model, layers, target', [
+    (theanets.convolution.Regressor, REG_LAYERS, u.NUM_OUTPUTS),
+    (theanets.convolution.Classifier, CLF_LAYERS, u.NUM_CLASSES),
+])
+def test_predict(Model, layers, target):
+    outs = Model(layers).feed_forward(u.CNN.INPUTS)
+    assert len(list(outs)) == 8
+    W, H = u.CNN.NUM_WIDTH, u.CNN.NUM_HEIGHT
+    w, h = u.CNN.FILTER_WIDTH, u.CNN.FILTER_HEIGHT
+    assert_shape(outs['in:out'].shape, W, H, u.NUM_INPUTS)
+    assert_shape(outs['hid1:out'].shape, W - w + 1, H - h + 1, u.NUM_HID1)
+    assert_shape(outs['hid2:out'].shape, W - 2 * w + 2, H - 2 * h + 2, u.NUM_HID2)
+    u.assert_shape(outs['out:out'].shape, target)
 
-    def test_sgd(self):
-        hid = dict(size=10, form='conv2', filter_size=self.FILTER_SIZE)
-        w = self.NUM_WIDTH - (self.FILTER_WIDTH - 1)
-        h = self.NUM_HEIGHT - (self.FILTER_HEIGHT - 1)
-        flat = ('flatten', 10 * w * h)
-        self.exp = theanets.Experiment(
-            theanets.convolution.Classifier,
-            layers=(self.NUM_INPUTS, hid, flat, self.NUM_CLASSES),
-            weighted=True)
-        self.assert_progress('sgd', [self.INPUTS, self.CLASSES, self.CLASS_WEIGHTS])
+
+class TestClassifier:
+    @pytest.fixture
+    def net(self):
+        return theanets.convolution.Classifier(CLF_LAYERS)
+
+    def test_predict_proba(self, net):
+        u.assert_shape(net.predict_proba(u.CNN.INPUTS).shape, u.NUM_CLASSES)
+
+    def test_predict_logit(self, net):
+        u.assert_shape(net.predict_logit(u.CNN.INPUTS).shape, u.NUM_CLASSES)
+
+    def test_score(self, net):
+        w = 0.5 * np.ones(u.CLASSES.shape, 'f')
+        assert 0 <= net.score(u.CNN.INPUTS, u.CLASSES, w) <= 1

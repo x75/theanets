@@ -62,27 +62,21 @@ class Recurrent(base.Layer):
         If given, limit backpropagation of gradient information in scans (loops)
         to the given number of time steps. Defaults to -1, which imposes no
         limit.
+
+    h_0 : str, optional
+        If provided, this should name a network output that provides the initial
+        state for the network's hidden units. Defaults to ``None``, which uses
+        an all-zero initial state.
     '''
 
-    def initial_state(self, name, batch_size):
-        '''Return an array of suitable for representing initial state.
+    def __init__(self, h_0=None, **kwargs):
+        super(Recurrent, self).__init__(**kwargs)
+        self.h_0 = h_0
 
-        Parameters
-        ----------
-        name : str
-            Name of the variable to return.
-        batch_size : int
-            Number of elements in a batch. This can be symbolic.
-
-        Returns
-        -------
-        initial : theano shared variable
-            A variable containing the initial state of some recurrent variable.
-        '''
-        values = theano.shared(
-            np.zeros((1, self.size), util.FLOAT),
-            name=self._fmt('{}0'.format(name)))
-        return TT.repeat(values, batch_size, axis=0)
+    def resolve(self, layers):
+        '''Resolve the names of inputs for this layer.'''
+        super(Recurrent, self).resolve(layers)
+        self.h_0 = self._resolve(self.h_0, layers)
 
     def add_weights(self, name, nin, nout, mean=0, std=0, sparsity=0, radius=0,
                     diagonal=0):
@@ -127,27 +121,59 @@ class Recurrent(base.Layer):
             arr = util.random_matrix(nin, nout, mean, std, sparsity=s, rng=self.rng)
         self._params.append(theano.shared(arr, name=self._fmt(name)))
 
-    def _scan(self, fn, inputs, inits=None, name='scan'):
+    def _resolve(self, value, layers):
+        '''Helper for resolving the name of one input to a full name.
+
+        Parameters
+        ----------
+        value : str or None
+            Name of the attribute to resolve
+        layers : list of :class:`Layer <theanets.layers.base.Layer>`
+            A list of the layers that are available for resolving inputs.
+
+        Raises
+        ------
+        theanets.util.ConfigurationError :
+            If an input cannot be resolved.
+
+        Returns
+        -------
+        name : str or None
+            A fully-scoped input name, or ``None`` if ``value`` was ``None``.
+        '''
+        if value is None or ':' in value:
+            return value
+        try:
+            layer = [l for l in layers if l.name == value][0]
+        except:
+            raise util.ConfigurationError(
+                'layer "{}" cannot resolve input "{}"'.format(self.name, value))
+        return layer.output_name
+
+    def _scan(self, inputs, outputs, name='scan', step=None, constants=None):
         '''Helper method for defining a basic loop in theano.
 
         Parameters
         ----------
-        fn : callable
-            The callable to apply in the loop.
         inputs : sequence of theano expressions
             Inputs to the scan operation.
-        inits : sequence of None, tensor, tuple, or scan output specifier
+        outputs : sequence of output specifiers
             Specifiers for the outputs of the scan operation. This should be a
-            list containing:
+            sequence containing:
             - None for values that are output by the scan but not tapped as
               inputs,
-            - a theano tensor variable with a 'shape' attribute, or
-            - a tuple containing a string and an integer for output values that
-              are also tapped as inputs, or
-            - a dictionary containing a full output specifier.
-            See "outputs_info" in the Theano documentation for ``scan``.
+            - an integer or theano scalar (``ndim == 0``) indicating the batch
+              size for initial zero state,
+            - a theano tensor variable (``ndim > 0``) containing initial state
+              data, or
+            - a dictionary containing a full output specifier. See
+              ``outputs_info`` in the Theano documentation for ``scan``.
         name : str, optional
-            Name of the scan variable to create. Defaults to 'scan'.
+            Name of the scan variable to create. Defaults to ``'scan'``.
+        step : callable, optional
+            The callable to apply in the loop. Defaults to :func:`self._step`.
+        constants : sequence of tensor, optional
+            A sequence of parameters, if any, needed by the step function.
 
         Returns
         -------
@@ -156,20 +182,24 @@ class Recurrent(base.Layer):
         updates : sequence of update tuples
             A sequence of updates to apply inside a theano function.
         '''
-        outputs = []
-        for i, x in enumerate(inits or inputs):
-            if hasattr(x, 'shape'):
-                x = self.initial_state(str(i), x.shape[1])
-            elif isinstance(x, int):
-                x = self.initial_state(str(i), x)
-            elif isinstance(x, tuple):
-                x = self.initial_state(*x)
-            outputs.append(x)
+        init = []
+        for i, x in enumerate(outputs):
+            ndim = getattr(x, 'ndim', -1)
+            if x is None or isinstance(x, dict) or ndim > 0:
+                init.append(x)
+                continue
+            if isinstance(x, int) or ndim == 0:
+                init.append(TT.repeat(theano.shared(
+                    np.zeros((1, self.size), util.FLOAT),
+                    name=self._fmt('init{}'.format(i))), x, axis=0))
+                continue
+            raise ValueError('cannot handle input {} for scan!'.format(x))
         return theano.scan(
-            fn,
+            step or self._step,
             name=self._fmt(name),
             sequences=inputs,
-            outputs_info=outputs,
+            outputs_info=init,
+            non_sequences=constants,
             go_backwards='back' in self.kwargs.get('direction', '').lower(),
             truncate_gradient=self.kwargs.get('bptt_limit', -1),
         )
@@ -195,6 +225,18 @@ class Recurrent(base.Layer):
             z = np.random.uniform(-6, -eps, size=self.size).astype(util.FLOAT)
             return theano.shared(np.exp(z), name=self._fmt('rate'))
         return None
+
+    def to_spec(self):
+        '''Create a specification dictionary for this layer.
+
+        Returns
+        -------
+        spec : dict
+            A dictionary specifying the configuration of this layer.
+        '''
+        spec = super(Recurrent, self).to_spec()
+        spec.update(h_0=self.h_0)
+        return spec
 
 
 class RNN(Recurrent):
@@ -236,40 +278,24 @@ class RNN(Recurrent):
         self.add_bias('b', self.size)
 
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`base.Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function,
-            and an "out" output that gives the post-activation output.
-        updates : list of update pairs
-            A sequence of updates to apply inside a theano function.
-        '''
+        '''Transform the inputs for this layer into an output for the layer.'''
         # input is:   (batch, time, input)
         # scan wants: (time, batch, input)
         i = self._only_input(inputs).dimshuffle(1, 0, 2)
         x = TT.dot(i, self.find('xh')) + self.find('b')
 
-        def fn(x_t, h_tm1):
-            pre = x_t + TT.dot(h_tm1, self.find('hh'))
-            return [pre, self.activate(pre)]
-
         # output is:  (time, batch, output)
         # we want:    (batch, time, output)
-        (p, o), updates = self._scan(fn, [x], [None, x])
+        (p, o), updates = self._scan(
+            [x], [None, inputs.get(self.h_0, x.shape[1])])
         pre = p.dimshuffle(1, 0, 2)
         out = o.dimshuffle(1, 0, 2)
 
         return dict(pre=pre, out=out), updates
+
+    def _step(self, x_t, h_tm1):
+        pre = x_t + TT.dot(h_tm1, self.find('hh'))
+        return [pre, self.activate(pre)]
 
 
 class RRNN(Recurrent):
@@ -360,60 +386,45 @@ class RRNN(Recurrent):
                 self.add_weights('xr', self.input_size, self.size)
 
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`base.Layer.connect`.
-
-        Returns
-        -------
-        outputs : theano expression
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function,
-            a "hid" output that gives the rate-independent, post-activation
-            hidden state, a "rate" output that gives the rate value for each
-            hidden unit, and an "out" output that gives the hidden output.
-        updates : list of update pairs
-            A sequence of updates to apply inside a theano function.
-        '''
+        '''Transform the inputs for this layer into an output for the layer.'''
         # input is:   (batch, time, input)
         # scan wants: (time, batch, input)
         x = self._only_input(inputs).dimshuffle(1, 0, 2)
-        h = TT.dot(x, self.find('xh')) + self.find('b')
-        r = self._rates
 
-        def fn_dynamic(x_t, r_t, h_tm1):
-            pre = x_t + TT.dot(h_tm1, self.find('hh'))
-            h_t = self.activate(pre)
-            return [pre, h_t, (1 - r_t) * h_tm1 + r_t * h_t]
-
-        def fn_static(x_t, h_tm1):
-            pre = x_t + TT.dot(h_tm1, self.find('hh'))
-            h_t = self.activate(pre)
-            return [pre, h_t, (1 - r) * h_tm1 + r * h_t]
-
-        fn = fn_static
-        seqs = [h]
-
+        step = self._step_static
+        arrays = [TT.dot(x, self.find('xh')) + self.find('b')]
+        const = []
         if self.rate == 'matrix':
-            fn = fn_dynamic
+            step = self._step_dynamic
             r = TT.nnet.sigmoid(TT.dot(x, self.find('xr')) + self.find('r'))
-            seqs.append(r)
+            arrays.append(r)
         elif self.rate == 'vector':
             r = TT.nnet.sigmoid(self.find('r'))
+            const.append(r)
+        else:
+            r = self._rates
+            const.append(r)
 
         # output is:  (time, batch, output)
         # we want:    (batch, time, output)
-        (p, h, o), updates = self._scan(fn, seqs, [None, None, x])
+        (p, h, o), updates = self._scan(
+            arrays, [None, None, inputs.get(self.h_0, x.shape[1])],
+            constants=const, step=step)
         pre = p.dimshuffle(1, 0, 2)
         hid = h.dimshuffle(1, 0, 2)
         out = o.dimshuffle(1, 0, 2)
 
         return dict(pre=pre, hid=hid, rate=r, out=out), updates
+
+    def _step_dynamic(self, x_t, r_t, h_tm1):
+        pre = x_t + TT.dot(h_tm1, self.find('hh'))
+        h_t = self.activate(pre)
+        return [pre, h_t, (1 - r_t) * h_tm1 + r_t * h_t]
+
+    def _step_static(self, x_t, h_tm1, r):
+        pre = x_t + TT.dot(h_tm1, self.find('hh'))
+        h_t = self.activate(pre)
+        return [pre, h_t, (1 - r) * h_tm1 + r * h_t]
 
 
 class MRNN(Recurrent):
@@ -485,44 +496,25 @@ class MRNN(Recurrent):
         self.add_bias('b', self.size)
 
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`base.Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "factors" output that
-            gives the activation of the hidden weight factors given the input
-            data (but not incorporating influence from the hidden states), a
-            "pre" output that gives the unit activity before applying the
-            layer's activation function, and an "out" output that gives the
-            post-activation output.
-        updates : list of update pairs
-            A sequence of updates to apply inside a theano function.
-        '''
+        '''Transform the inputs for this layer into an output for the layer.'''
         # input is:   (batch, time, input)
         # scan wants: (time, batch, input)
         x = self._only_input(inputs).dimshuffle(1, 0, 2)
         h = TT.dot(x, self.find('xh')) + self.find('b')
         f = TT.dot(x, self.find('xf'))
 
-        def fn(x_t, f_t, h_tm1):
-            pre = x_t + TT.dot(f_t * TT.dot(h_tm1, self.find('hf')), self.find('fh'))
-            return [pre, self.activate(pre)]
-
         # output is:  (time, batch, output)
         # we want:    (batch, time, output)
-        (p, o), updates = self._scan(fn, [h, f], [None, x])
+        (p, o), updates = self._scan(
+            [h, f], [None, inputs.get(self.h_0, x.shape[1])])
         pre = p.dimshuffle(1, 0, 2)
         out = o.dimshuffle(1, 0, 2)
 
         return dict(pre=pre, factors=f, out=out), updates
+
+    def _step(self, x_t, f_t, h_tm1):
+        pre = x_t + TT.dot(f_t * TT.dot(h_tm1, self.find('hf')), self.find('fh'))
+        return [pre, self.activate(pre)]
 
     def to_spec(self):
         '''Create a specification dictionary for this layer.
@@ -627,6 +619,15 @@ class LSTM(Recurrent):
        Networks." http://arxiv.org/pdf/1308.0850v5.pdf
     '''
 
+    def __init__(self, c_0=None, **kwargs):
+        super(LSTM, self).__init__(**kwargs)
+        self.c_0 = c_0
+
+    def resolve(self, layers):
+        '''Resolve the names of inputs for this layer.'''
+        super(LSTM, self).resolve(layers)
+        self.c_0 = self._resolve(self.c_0, layers)
+
     def setup(self):
         '''Set up the parameters and initial values for this layer.'''
         self.add_weights('xh', self.input_size, 4 * self.size)
@@ -638,46 +639,14 @@ class LSTM(Recurrent):
         self.add_bias('co', self.size)
 
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`base.Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "cell" output that
-            gives the value of each hidden cell in the layer, and an "out"
-            output that gives the actual gated output from the layer.
-        updates : list of update pairs
-            A sequence of updates to apply inside a theano function.
-        '''
-        def split(z):
-            n = self.size
-            return z[:, 0*n:1*n], z[:, 1*n:2*n], z[:, 2*n:3*n], z[:, 3*n:4*n]
-
-        def fn(x_t, h_tm1, c_tm1):
-            xi, xf, xc, xo = split(x_t + TT.dot(h_tm1, self.find('hh')))
-            i_t = TT.nnet.sigmoid(xi + c_tm1 * self.find('ci'))
-            f_t = TT.nnet.sigmoid(xf + c_tm1 * self.find('cf'))
-            c_t = f_t * c_tm1 + i_t * TT.tanh(xc)
-            o_t = TT.nnet.sigmoid(xo + c_t * self.find('co'))
-            h_t = o_t * TT.tanh(c_t)
-            return [h_t, c_t]
-
+        '''Transform the inputs for this layer into an output for the layer.'''
         # input is:   (batch, time, input)
         # scan wants: (time, batch, input)
         x = self._only_input(inputs).dimshuffle(1, 0, 2)
 
-        batch_size = x.shape[1]
         (o, c), updates = self._scan(
-            fn,
             [TT.dot(x, self.find('xh')) + self.find('b')],
-            [('h', batch_size), ('c', batch_size)])
+            [inputs.get(self.h_0, x.shape[1]), inputs.get(self.c_0, x.shape[1])])
 
         # output is:  (time, batch, output)
         # we want:    (batch, time, output)
@@ -685,6 +654,30 @@ class LSTM(Recurrent):
         cell = c.dimshuffle(1, 0, 2)
 
         return dict(out=out, cell=cell), updates
+
+    def _step(self, x_t, h_tm1, c_tm1):
+        def split(z):
+            n = self.size
+            return z[:, 0*n:1*n], z[:, 1*n:2*n], z[:, 2*n:3*n], z[:, 3*n:4*n]
+        xi, xf, xc, xo = split(x_t + TT.dot(h_tm1, self.find('hh')))
+        i_t = TT.nnet.sigmoid(xi + c_tm1 * self.find('ci'))
+        f_t = TT.nnet.sigmoid(xf + c_tm1 * self.find('cf'))
+        c_t = f_t * c_tm1 + i_t * TT.tanh(xc)
+        o_t = TT.nnet.sigmoid(xo + c_t * self.find('co'))
+        h_t = o_t * TT.tanh(c_t)
+        return [h_t, c_t]
+
+    def to_spec(self):
+        '''Create a specification dictionary for this layer.
+
+        Returns
+        -------
+        spec : dict
+            A dictionary specifying the configuration of this layer.
+        '''
+        spec = super(LSTM, self).to_spec()
+        spec.update(c_0=self.c_0)
+        return spec
 
 
 class GRU(Recurrent):
@@ -747,6 +740,7 @@ class GRU(Recurrent):
     '''
 
     def setup(self):
+        '''Set up the parameters and initial values for this layer.'''
         self.add_weights('xh', self.input_size, self.size)
         self.add_weights('xr', self.input_size, self.size)
         self.add_weights('xz', self.input_size, self.size)
@@ -758,43 +752,16 @@ class GRU(Recurrent):
         self.add_bias('bz', self.size)
 
     def transform(self, inputs):
-        '''Transform inputs to this layer into outputs for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`base.Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function, a
-            "hid" output that gives the post-activation values before applying
-            the rate mixing, and an "out" output that gives the overall output.
-        updates : sequence of update pairs
-            A sequence of updates to apply to this layer's state inside a theano
-            function.
-        '''
+        '''Transform the inputs for this layer into an output for the layer.'''
         # input is:   (batch, time, input)
         # scan wants: (time, batch, input)
         x = self._only_input(inputs).dimshuffle(1, 0, 2)
 
-        def fn(x_t, r_t, z_t, h_tm1):
-            r = TT.nnet.sigmoid(r_t + TT.dot(h_tm1, self.find('hr')))
-            z = TT.nnet.sigmoid(z_t + TT.dot(h_tm1, self.find('hz')))
-            pre = x_t + TT.dot(r * h_tm1, self.find('hh'))
-            h_t = self.activate(pre)
-            return [pre, h_t, z, (1 - z) * h_tm1 + z * h_t]
-
         (p, h, r, o), updates = self._scan(
-            fn,
             [TT.dot(x, self.find('xh')) + self.find('bh'),
              TT.dot(x, self.find('xr')) + self.find('br'),
              TT.dot(x, self.find('xz')) + self.find('bz')],
-            [None, None, None, x])
+            [None, None, None, inputs.get(self.h_0, x.shape[1])])
 
         # output is:  (time, batch, output)
         # we want:    (batch, time, output)
@@ -804,6 +771,13 @@ class GRU(Recurrent):
         out = o.dimshuffle(1, 0, 2)
 
         return dict(pre=pre, hid=hid, rate=rate, out=out), updates
+
+    def _step(self, x_t, r_t, z_t, h_tm1):
+        r = TT.nnet.sigmoid(r_t + TT.dot(h_tm1, self.find('hr')))
+        z = TT.nnet.sigmoid(z_t + TT.dot(h_tm1, self.find('hz')))
+        pre = x_t + TT.dot(r * h_tm1, self.find('hh'))
+        h_t = self.activate(pre)
+        return [pre, h_t, z, (1 - z) * h_tm1 + z * h_t]
 
 
 class Clockwork(Recurrent):
@@ -839,12 +813,13 @@ class Clockwork(Recurrent):
     .. math::
        h_t^i = \left\{ \begin{align*}
           &g\left( x_tW_{xh}^i + b_h^i +
-             \sum_{j=1}^i h_{t-1}^jW_{hh}^j\right)
+             \sum_{j=i}^M h_{t-1}^jW_{hh}^j\right)
              \mbox{ if } t \mod T_i = 0 \\
           &h_{t-1}^i \mbox{ otherwise.} \end{align*} \right.
 
-    Here, the modules have been ordered such that :math:`T_j > T_i` for
-    :math:`j < i`.
+    Here, the :math:`M` modules have been ordered such that :math:`T_i < T_j`
+    for :math:`i < j` -- that is, the modules are ordered from "fastest" to
+    "slowest."
 
     Note that, unlike in the original paper, the hidden-hidden weight matrix is
     stored in full (i.e., it is ``size`` x ``size``); the module separation is
@@ -880,15 +855,17 @@ class Clockwork(Recurrent):
 
     def __init__(self, periods, **kwargs):
         assert kwargs['size'] % len(periods) == 0
-        self.periods = np.asarray(sorted(periods, reverse=True))
+        self.periods = np.asarray(sorted(periods))
         super(Clockwork, self).__init__(**kwargs)
 
     def setup(self):
+        '''Set up the parameters and initial values for this layer.'''
         n = self.size // len(self.periods)
         mask = np.zeros((self.size, self.size), util.FLOAT)
         period = np.zeros((self.size, ), 'i')
         for i, T in enumerate(self.periods):
-            mask[i*n:(i+1)*n, i*n:] = 1
+            # see https://github.com/lmjohns3/theanets/issues/125
+            mask[i*n:, i*n:(i+1)*n] = 1
             period[i*n:(i+1)*n] = T
         self._mask = theano.shared(mask, name='mask')
         self._period = theano.shared(period, name='period')
@@ -898,7 +875,8 @@ class Clockwork(Recurrent):
 
     def log(self):
         '''Log some information about this layer.'''
-        inputs = ', '.join('({}){}'.format(n, s) for n, s in self.inputs.items())
+        inputs = ', '.join('({0}){1.size}'.format(n, l)
+                           for n, l in self._resolved_inputs.items())
         logging.info('layer %s "%s": %s -> %s, [%s] %s, %d parameters',
                      self.__class__.__name__,
                      self.name,
@@ -906,45 +884,29 @@ class Clockwork(Recurrent):
                      self.size,
                      ' '.join(str(T) for T in self.periods),
                      getattr(self.activate, 'name', self.activate),
-                     self.num_params)
+                     sum(np.prod(p.get_value().shape) for p in self.params))
 
     def transform(self, inputs):
-        '''Transform inputs to this layer into outputs for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`base.Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function,
-            and a "hid" output that gives the post-activation values.
-        updates : sequence of update pairs
-            A sequence of updates to apply to this layer's state inside a theano
-            function.
-        '''
+        '''Transform the inputs for this layer into an output for the layer.'''
         # input is:   (batch, time, input)
         # scan wants: (time, batch, input)
         i = self._only_input(inputs).dimshuffle(1, 0, 2)
         x = TT.dot(i, self.find('xh')) + self.find('b')
 
-        def fn(t, x_t, p_tm1, h_tm1):
-            p = x_t + TT.dot(h_tm1, self.find('hh') * self._mask)
-            p_t = TT.switch(TT.eq(t % self._period, 0), p, p_tm1)
-            return [p_t, self.activate(p_t)]
+        init = inputs.get(self.h_0, x.shape[1])
 
         # output is:  (time, batch, output)
         # we want:    (batch, time, output)
-        (p, o), updates = self._scan(fn, [TT.arange(x.shape[0]), x], [x, x])
+        (p, o), updates = self._scan([TT.arange(x.shape[0]), x], [init, init])
         pre = p.dimshuffle(1, 0, 2)
         out = o.dimshuffle(1, 0, 2)
 
         return dict(pre=pre, out=out), updates
+
+    def _step(self, t, x_t, pre_tm1, h_tm1):
+        pre = x_t + TT.dot(h_tm1, self.find('hh') * self._mask)
+        pre_t = TT.switch(TT.eq(t % self._period, 0), pre, pre_tm1)
+        return [pre_t, self.activate(pre_t)]
 
     def to_spec(self):
         '''Create a specification dictionary for this layer.
@@ -1015,6 +977,7 @@ class MUT1(Recurrent):
     '''
 
     def setup(self):
+        '''Set up the parameters and initial values for this layer.'''
         self.add_weights('xh', self.input_size, self.size)
         self.add_weights('xr', self.input_size, self.size)
         self.add_weights('xz', self.input_size, self.size)
@@ -1025,42 +988,16 @@ class MUT1(Recurrent):
         self.add_bias('bz', self.size)
 
     def transform(self, inputs):
-        '''Transform inputs to this layer into outputs for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`base.Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function, a
-            "hid" output that gives the post-activation values before applying
-            the rate mixing, and an "out" output that gives the overall output.
-        updates : sequence of update pairs
-            A sequence of updates to apply to this layer's state inside a theano
-            function.
-        '''
+        '''Transform the inputs for this layer into an output for the layer.'''
         # input is:   (batch, time, input)
         # scan wants: (time, batch, input)
         x = self._only_input(inputs).dimshuffle(1, 0, 2)
         z = TT.nnet.sigmoid(TT.dot(x, self.find('xz')) + self.find('bz'))
 
-        def fn(x_t, r_t, z_t, h_tm1):
-            r = TT.nnet.sigmoid(r_t + TT.dot(h_tm1, self.find('hr')))
-            pre = x_t + TT.dot(r * h_tm1, self.find('hh'))
-            h_t = TT.tanh(pre)
-            return [pre, h_t, (1 - z_t) * h_tm1 + z_t * h_t]
-
         (p, h, o), updates = self._scan(
-            fn,
             [TT.tanh(TT.dot(x, self.find('xh')) + self.find('bh')),
              TT.dot(x, self.find('xr')) + self.find('br'), z],
-            [None, None, x])
+            [None, None, inputs.get(self.h_0, x.shape[1])])
 
         # output is:  (time, batch, output)
         # we want:    (batch, time, output)
@@ -1070,6 +1007,12 @@ class MUT1(Recurrent):
         out = o.dimshuffle(1, 0, 2)
 
         return dict(pre=pre, hid=hid, rate=rate, out=out), updates
+
+    def _step(self, x_t, r_t, z_t, h_tm1):
+        r = TT.nnet.sigmoid(r_t + TT.dot(h_tm1, self.find('hr')))
+        pre = x_t + TT.dot(r * h_tm1, self.find('hh'))
+        h_t = TT.tanh(pre)
+        return [pre, h_t, (1 - z_t) * h_tm1 + z_t * h_t]
 
 
 class SCRN(Recurrent):
@@ -1129,12 +1072,19 @@ class SCRN(Recurrent):
        http://arxiv.org/abs/1412.7753
     '''
 
-    def __init__(self, rate='vector', **kwargs):
+    def __init__(self, rate='vector', s_0=None, **kwargs):
         self.rate = rate.lower().strip()
         super(SCRN, self).__init__(**kwargs)
         self._rates = self._create_rates()
+        self.s_0 = s_0
+
+    def resolve(self, layers):
+        '''Resolve the names of inputs for this layer.'''
+        super(SCRN, self).resolve(layers)
+        self.s_0 = self._resolve(self.s_0, layers)
 
     def setup(self):
+        '''Set up the parameters and initial values for this layer.'''
         self.add_weights('xs', self.input_size, self.size)
         self.add_weights('xh', self.input_size, self.size)
         self.add_weights('sh', self.size, self.size)
@@ -1148,26 +1098,7 @@ class SCRN(Recurrent):
             self.add_bias('r', self.size)
 
     def transform(self, inputs):
-        '''Transform inputs to this layer into outputs for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`base.Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function, a
-            "hid" output that gives the post-activation values before applying
-            the rate mixing, and an "out" output that gives the overall output.
-        updates : sequence of update pairs
-            A sequence of updates to apply to this layer's state inside a theano
-            function.
-        '''
+        '''Transform the inputs for this layer into an output for the layer.'''
         # input is:   (batch, time, input)
         # scan wants: (time, batch, input)
         x = self._only_input(inputs).dimshuffle(1, 0, 2)
@@ -1176,15 +1107,12 @@ class SCRN(Recurrent):
         if self.rate == 'vector':
             r = TT.nnet.sigmoid(self.find('r'))
 
-        def fn(xh_t, xs_t, h_tm1, s_tm1):
-            s = (1 - r) * s_tm1 + r * xs_t
-            p = xh_t + TT.dot(h_tm1, self.find('hh')) + TT.dot(s, self.find('sh'))
-            return [p, TT.nnet.sigmoid(p), s]
-
         (p, _, s), updates = self._scan(
-            fn,
             [TT.dot(x, self.find('xh')), TT.dot(x, self.find('xs'))],
-            [None, x, x])
+            [None,
+             inputs.get(self.h_0, x.shape[1]),
+             inputs.get(self.s_0, x.shape[1])],
+            constants=[r])
 
         # output is:  (time, batch, output)
         # we want:    (batch, time, output)
@@ -1198,6 +1126,23 @@ class SCRN(Recurrent):
         return dict(
             rate=r, state=state, hid=hid, pre=pre, out=self.activate(pre),
         ), updates
+
+    def _step(self, xh_t, xs_t, h_tm1, s_tm1, r):
+        s = (1 - r) * s_tm1 + r * xs_t
+        p = xh_t + TT.dot(h_tm1, self.find('hh')) + TT.dot(s, self.find('sh'))
+        return [p, TT.nnet.sigmoid(p), s]
+
+    def to_spec(self):
+        '''Create a specification dictionary for this layer.
+
+        Returns
+        -------
+        spec : dict
+            A dictionary specifying the configuration of this layer.
+        '''
+        spec = super(SCRN, self).to_spec()
+        spec.update(s_0=self.s_0)
+        return spec
 
 
 class Bidirectional(base.Layer):
@@ -1263,32 +1208,13 @@ class Bidirectional(base.Layer):
         '''A list of all learnable parameters in this layer.'''
         return self.forward.params + self.backward.params
 
-    @property
-    def num_params(self):
-        '''Total number of learnable parameters in this layer.'''
-        return self.forward.num_params + self.backward.num_params
+    def bind(self, *args, **kwargs):
+        super(Bidirectional, self).bind(*args, **kwargs)
+        self.forward.bind(*args, **kwargs)
+        self.backward.bind(*args, **kwargs)
 
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`base.Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of theano expressions
-            Theano expressions representing the output from the layer. This
-            layer type produces an "out" output that concatenates the outputs
-            from its underlying workers. If present, it also concatenates the
-            "pre" and "cell" outputs from the underlying workers. Finally, it
-            passes along the individual outputs from its workers using "fw" and
-            "bw" prefixes for forward and backward directions.
-        updates : list of update pairs
-            A list of state updates to apply inside a theano function.
-        '''
+        '''Transform the inputs for this layer into an output for the layer.'''
         fout, fupd = self.forward.transform(inputs)
         bout, bupd = self.backward.transform(inputs)
         outputs = dict(out=TT.concatenate([fout['out'], bout['out']], axis=2))

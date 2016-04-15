@@ -90,7 +90,7 @@ def from_kwargs(graph, **kwargs):
     rng = kwargs.get('rng', 13)
 
     def pattern(ls):
-        return tuple(l.output_name() for l in ls)
+        return tuple(l.output_name for l in ls)
 
     inputs = pattern([l for l in graph.layers if isinstance(l, layers.Input)])
     hiddens = pattern(graph.layers[1:-1])
@@ -387,7 +387,7 @@ class HiddenL1(Regularizer):
     __extra_registration_keys__ = ['hidden_l1', 'hidden_sparsity']
 
     def loss(self, layers, outputs):
-        pattern = self.pattern or [l.output_name() for l in layers[1:-1]]
+        pattern = self.pattern or [l.output_name for l in layers[1:-1]]
         matches = util.outputs_matching(outputs, pattern)
         hiddens = [expr for _, expr in matches]
         if not hiddens:
@@ -425,12 +425,11 @@ class RecurrentNorm(Regularizer):
 
     To use this regularizer at training time:
 
-    >>> net.train(..., recurrent_norm=0.1)
-
-    By default all recurrent layer outputs are penalized. To include only some
-    graph outputs:
-
     >>> net.train(..., recurrent_norm=dict(weight=0.1, pattern='hid3:out'))
+
+    A ``pattern`` must be provided; this pattern will match against all outputs
+    in the computation graph, so some care must be taken to ensure that the
+    regularizer is applied only to specific layer outputs.
 
     To use this regularizer when running the model forward to generate a
     prediction:
@@ -454,7 +453,7 @@ class RecurrentNorm(Regularizer):
         if self.pattern is None:
             raise util.ConfigurationError('RecurrentNorm requires a pattern!')
         matches = util.outputs_matching(outputs, self.pattern)
-        hiddens = [expr for _, expr in matches if expr.ndim == 3]
+        hiddens = [expr for _, expr in matches]
         if not hiddens:
             return 0
         norms = ((e * e).sum(axis=-1) for e in hiddens)
@@ -493,17 +492,16 @@ class RecurrentState(Regularizer):
 
     To use this regularizer at training time:
 
-    >>> net.train(..., recurrent_state=0.1)
-
-    By default all recurrent layer outputs are penalized. To include only some
-    graph outputs:
-
     >>> net.train(..., recurrent_state=dict(weight=0.1, pattern='hid3:out'))
+
+    A ``pattern`` must be provided; this pattern will match against all outputs
+    in the computation graph, so some care must be taken to ensure that the
+    regularizer is applied only to specific layer outputs.
 
     To use this regularizer when running the model forward to generate a
     prediction:
 
-    >>> net.predict(..., recurrent_state=0.1)
+    >>> net.predict(..., recurrent_state=dict(weight=0.1, pattern='hid3:out'))
 
     The value associated with the keyword argument can be a scalar---in which
     case it provides the weight for the regularizer---or a dictionary, in which
@@ -519,8 +517,8 @@ class RecurrentState(Regularizer):
     def loss(self, layers, outputs):
         if self.pattern is None:
             raise util.ConfigurationError('RecurrentNorm requires a pattern!')
-        matches = util.outputs_matching(outputs, pattern)
-        hiddens = [expr for _, expr in matches if expr.ndim == 3]
+        matches = util.outputs_matching(outputs, self.pattern)
+        hiddens = [expr for _, expr in matches]
         if not hiddens:
             return 0
         deltas = (e[:, :-1] - e[:, 1:] for e in hiddens)
@@ -609,7 +607,7 @@ class Contractive(Regularizer):
                      self.pattern, self.wrt)
 
     def loss(self, layer_list, outputs):
-        pattern = self.pattern or [l.output_name() for l in layer_list[1:-1]]
+        pattern = self.pattern or [l.output_name for l in layer_list[1:-1]]
         targets = [expr for _, expr in util.outputs_matching(outputs, pattern)]
         if not targets:
             return 0
@@ -810,4 +808,4 @@ class BernoulliDropout(Regularizer):
             noise = self.rng.binomial(
                 size=expr.shape, n=1, p=1-self.weight, dtype=util.FLOAT)
             outputs[name + '-predrop'] = expr
-            outputs[name] = expr * noise / self.weight
+            outputs[name] = expr * noise / (1-self.weight)
