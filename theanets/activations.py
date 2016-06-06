@@ -110,15 +110,9 @@ def build(name, layer, **kwargs):
     if isinstance(name, Activation):
         return name
 
-    def compose(a, b):
-        def c(z): return b(a(z))
-        c.name = '%s(%s)' % (b.name, a.name)
-        c.params = getattr(b, 'params', []) + getattr(a, 'params', [])
-        return c
-
     if '+' in name:
         return functools.reduce(
-            compose, (build(n, layer, **kwargs) for n in name.split('+')))
+            Compose, (build(n, layer, **kwargs) for n in name.split('+')))
 
     act = COMMON.get(name)
     if act is not None:
@@ -176,6 +170,21 @@ class Activation(util.Registrar(str('Base'), (), {})):
         raise NotImplementedError
 
 
+class Compose(Activation):
+    r'''Compose two activation functions.'''
+
+    def __init__(self, f, g):
+        self.f = f
+        self.g = g
+        self.name = '{}({})'.format(g.name, f.name)
+        self.layer = None
+        self.kwargs = {}
+        self.params = getattr(g, 'params', []) + getattr(f, 'params', [])
+
+    def __call__(self, x):
+        return self.g(self.f(x))
+
+
 class Prelu(Activation):
     r'''Parametric rectified linear activation with learnable leak rate.
 
@@ -201,13 +210,12 @@ class Prelu(Activation):
 
     def __init__(self, *args, **kwargs):
         super(Prelu, self).__init__(*args, **kwargs)
-        self.leak = theano.shared(
-            0.1 * abs(self.layer.rng.randn(self.layer.size).astype(util.FLOAT)),
-            name=self.layer._fmt('leak'))
+        arr = self.layer.rng.randn(self.layer.output_size).astype(util.FLOAT)
+        self.leak = theano.shared(0.1 * abs(arr), name=self.layer._fmt('leak'))
         self.params.append(self.leak)
 
     def __call__(self, x):
-        return (x + abs(x)) / 2 + self.leak * (x - abs(x)) / 2
+        return (x + abs(x)) / 2 + TT.exp(self.leak) * (x - abs(x)) / 2
 
 
 class LGrelu(Activation):
@@ -231,17 +239,42 @@ class LGrelu(Activation):
 
     def __init__(self, *args, **kwargs):
         super(LGrelu, self).__init__(*args, **kwargs)
-        self.gain = theano.shared(
-            0.1 * abs(self.layer.rng.randn(self.layer.size).astype(util.FLOAT)),
-            name=self.layer._fmt('gain'))
+        arr = self.layer.rng.randn(self.layer.output_size).astype(util.FLOAT)
+        self.gain = theano.shared(0.1 * abs(arr), name=self.layer._fmt('gain'))
         self.params.append(self.gain)
-        self.leak = theano.shared(
-            0.1 * abs(self.layer.rng.randn(self.layer.size).astype(util.FLOAT)),
-            name=self.layer._fmt('leak'))
+        arr = self.layer.rng.randn(self.layer.output_size).astype(util.FLOAT)
+        self.leak = theano.shared(0.1 * abs(arr), name=self.layer._fmt('leak'))
         self.params.append(self.leak)
 
     def __call__(self, x):
-        return self.gain * (x + abs(x)) / 2 + self.leak * (x - abs(x)) / 2
+        return TT.exp(self.gain) * (x + abs(x)) / 2 + TT.exp(self.leak) * (x - abs(x)) / 2
+
+
+class Elu(Activation):
+    r'''Exponential linear activation with learnable gain.
+
+    This activation is characterized by two pieces joined at the origin. For
+    negative inputs, the unit response is a decaying exponential function of the
+    input with saturation :math:`\alpha`. For positive inputs, the unit response
+    is the identity linear function of the input:
+
+    .. math::
+       f(x) = \left\{ \begin{eqnarray*} \alpha (exp(x) - 1) &\qquad& \mbox{if } x < 0 \\
+                       x &\qquad& \mbox{otherwise} \end{eqnarray*} \right.
+
+    This activation allocates a separate gain for each unit in its layer.
+    '''
+
+    __extra_registration_keys__ = []
+
+    def __init__(self, *args, **kwargs):
+        super(Elu, self).__init__(*args, **kwargs)
+        arr = self.layer.rng.randn(self.layer.output_size).astype(util.FLOAT)
+        self.gain = theano.shared(0.1 * abs(arr), name=self.layer._fmt('gain'))
+        self.params.append(self.gain)
+
+    def __call__(self, x):
+        return x * (x >= 0) + TT.exp(self.gain) * (TT.exp(x) - 1) * (x < 0)
 
 
 class Maxout(Activation):
@@ -295,11 +328,11 @@ class Maxout(Activation):
 
         self.pieces = kwargs['pieces']
 
-        m = self.layer.rng.randn(self.layer.size, self.pieces).astype(util.FLOAT)
+        m = self.layer.rng.randn(self.layer.output_size, self.pieces).astype(util.FLOAT)
         self.slope = theano.shared(m, name=self.layer._fmt('slope'))
         self.params.append(self.slope)
 
-        b = self.layer.rng.randn(self.layer.size, self.pieces).astype(util.FLOAT)
+        b = self.layer.rng.randn(self.layer.output_size, self.pieces).astype(util.FLOAT)
         self.intercept = theano.shared(b, name=self.layer._fmt('intercept'))
         self.params.append(self.intercept)
 

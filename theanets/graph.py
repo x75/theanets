@@ -80,11 +80,20 @@ class Network(object):
         self._functions = {}  # cache of callable feedforward functions
         self._rng = rng
 
+        # create layers based on specs provided in the constructor.
         self.layers = []
         for i, layer in enumerate(layers):
-            self.add_layer(layer=layer, is_output=i == len(layers) - 1)
+            first = i == 0
+            last = i == len(layers) - 1
+            name = 'in' if first else 'out' if last else 'hid{}'.format(i)
+            activation = self.DEFAULT_OUTPUT_ACTIVATION if last else 'relu'
+            self.add_layer(layer=layer, name=name, activation=activation)
+
+        # bind layers to this graph after construction. this finalizes layer
+        # shapes and does other consistency checks based on the entire graph.
         [l.bind(self) for l in self.layers]
 
+        # create a default loss (usually).
         self.losses = []
         if loss and self.layers:
             self.set_loss(loss,
@@ -92,7 +101,7 @@ class Network(object):
                           target=self.OUTPUT_NDIM,
                           output_name=self.layers[-1].output_name)
 
-    def add_layer(self, layer=None, is_output=False, **kwargs):
+    def add_layer(self, layer=None, **kwargs):
         '''Add a :ref:`layer <layers>` to our network graph.
 
         Parameters
@@ -100,11 +109,6 @@ class Network(object):
         layer : int, tuple, dict, or :class:`Layer <theanets.layers.base.Layer>`
             A value specifying the layer to add. For more information, please
             see :ref:`guide-creating-specifying-layers`.
-        is_output : bool, optional
-            True iff this is the output layer for the graph. This influences the
-            default activation function used for the layer: output layers in
-            most models have a linear activation, while output layers in
-            classifier networks default to a softmax activation.
         '''
         # if the given layer is a Layer instance, just add it and move on.
         if isinstance(layer, layers.Layer):
@@ -113,25 +117,33 @@ class Network(object):
 
         form = kwargs.pop('form', 'ff' if self.layers else 'input').lower()
 
-        # if layer is a tuple, assume that it contains one or more of the following:
-        # - a layers.Layer subclass to construct (type)
+        if isinstance(layer, util.basestring):
+            if not layers.Layer.is_registered(layer):
+                raise util.ConfigurationError('unknown layer type: {}'.format(layer))
+            form = layer
+            layer = None
+
+        # if layer is a tuple/list of integers, assume it's a shape.
+        if isinstance(layer, (tuple, list)) and all(isinstance(x, int) for x in layer):
+            kwargs['shape'] = tuple(layer)
+            layer = None
+
+        # if layer is some other tuple/list, assume it's a list of:
         # - the name of a layers.Layer class (str)
         # - the name of an activation function (str)
         # - the number of units in the layer (int)
         if isinstance(layer, (tuple, list)):
             for el in layer:
-                try:
-                    if issubclass(el, layers.Layer):
-                        form = el.__name__
-                except TypeError:
-                    pass
-                if isinstance(el, util.basestring):
-                    if layers.Layer.is_registered(el):
-                        form = el
-                    else:
-                        kwargs['activation'] = el
-                if isinstance(el, int):
+                if isinstance(el, util.basestring) and layers.Layer.is_registered(el):
+                    form = el
+                elif isinstance(el, util.basestring):
+                    kwargs['activation'] = el
+                elif isinstance(el, int):
+                    if 'size' in kwargs:
+                        raise util.ConfigurationError(
+                            'duplicate layer sizes! {}'.format(kwargs))
                     kwargs['size'] = el
+            layer = None
 
         # if layer is a dictionary, try to extract a form for the layer, and
         # override our default keyword arguments with the rest.
@@ -141,22 +153,22 @@ class Network(object):
                     form = value.lower()
                 else:
                     kwargs[key] = value
+            layer = None
 
-        name = 'hid{}'.format(len(self.layers))
-        if is_output:
-            name = 'out'
-        if form == 'input':
-            name = 'in'
-        kwargs.setdefault('name', name)
-        kwargs.setdefault('size', layer)
+        # if neither shape nor size have been specified yet, check that the
+        # "layer" param is an int and use it for "size".
+        if 'shape' not in kwargs and 'size' not in kwargs and isinstance(layer, int):
+            kwargs['size'] = layer
 
-        if form == 'input':
+        # if it hasn't been provided in some other way yet, set input
+        # dimensionality based on the model.
+        if form == 'input' and 'shape' not in kwargs:
             kwargs.setdefault('ndim', self.INPUT_NDIM)
-        else:
-            act = self.DEFAULT_OUTPUT_ACTIVATION if is_output else 'relu'
+
+        # set some default layer parameters.
+        if form != 'input':
             kwargs.setdefault('inputs', self.layers[-1].output_name)
             kwargs.setdefault('rng', self._rng)
-            kwargs.setdefault('activation', act)
 
         if form.lower() == 'tied' and 'partner' not in kwargs:
             # we look backward through our list of layers for a partner.
@@ -180,10 +192,11 @@ class Network(object):
 
         layer = layers.Layer.build(form, **kwargs)
 
+        # check that graph inputs have unique names.
         if isinstance(layer, layers.Input):
-            names = set(i.name for i in self.inputs)
-            assert layer.name not in names, \
-                '"{}": duplicate input name!'.format(layer.name)
+            if any(layer.name == i.name for i in self.inputs):
+                raise util.ConfigurationError(
+                    '"{}": duplicate input name!'.format(layer.name))
 
         self.layers.append(layer)
 
@@ -270,12 +283,14 @@ class Network(object):
             treated as a number of minutes to wait between savings. If it is an
             int, it is treated as the number of training epochs to wait between
             savings. Defaults to 0.
-        save_progress : str, optional
+        save_progress : str or file handle, optional
             If this is not None, and ``save_progress`` is nonzero, then save the
-            model periodically during training. This parameter gives the full
-            path of a file to save the model. If this name contains a "{}"
-            format specifier, it will be filled with the integer Unix timestamp
-            at the time the model is saved. Defaults to None.
+            model periodically during training. This parameter gives either (a)
+            the full path of a file to save the model, or (b) a file-like object
+            where the model should be saved. If it is a string and the given
+            name contains a "{}" format specifier, it will be filled with the
+            integer Unix timestamp at the time the model is saved. Defaults to
+            None, which does not save models.
 
         Yields
         ------
@@ -332,7 +347,7 @@ class Network(object):
 
         # set up check to save model ...
         def needs_saving(elapsed, iteration):
-            if not save_progress:
+            if save_progress is None:
                 return False
             if isinstance(save_every, float):
                 return elapsed > 60 * save_every
@@ -346,7 +361,10 @@ class Network(object):
             yield monitors
             now = time.time()
             if i and needs_saving(now - start, i):
-                self.save(save_progress.format(int(now)))
+                filename_or_handle = save_progress
+                if isinstance(filename_or_handle, util.basestring):
+                    filename_or_handle = save_progress.format(int(now))
+                self.save(filename_or_handle)
                 start = now
 
     def train(self, *args, **kwargs):
@@ -385,7 +403,7 @@ class Network(object):
             h.update(str(s).encode('utf-8'))
         h = hashlib.md5()
         for l in self.layers:
-            add('{}{}{}'.format(l.__class__.__name__, l.name, l.size))
+            add('{}{}{}'.format(l.__class__.__name__, l.name, l.output_shape))
         for l in self.losses:
             add('{}{}'.format(l.__class__.__name__, l.weight))
         for r in regularizers:
@@ -570,38 +588,52 @@ class Network(object):
         self._graphs = {}
         self._functions = {}
 
-    def save(self, filename):
+    def save(self, filename_or_handle):
         '''Save the state of this network to a pickle file on disk.
 
         Parameters
         ----------
-        filename : str
-            Save the state of this network to a pickle file at the named path.
-            If this name ends in ".gz" then the output will automatically be
-            gzipped; otherwise the output will be a "raw" pickle.
+        filename_or_handle : str or file handle
+            Save the state of this network to a pickle file. If this parameter
+            is a string, it names the file where the pickle will be saved. If it
+            is a file-like object, this object will be used for writing the
+            pickle. If the filename ends in ".gz" then the output will
+            automatically be gzipped.
         '''
-        opener = gzip.open if filename.lower().endswith('.gz') else open
-        handle = opener(filename, 'wb')
+        if isinstance(filename_or_handle, util.basestring):
+            opener = gzip.open if filename_or_handle.lower().endswith('.gz') else open
+            handle = opener(filename_or_handle, 'wb')
+        else:
+            handle = filename_or_handle
         pickle.dump(self, handle, -1)
-        handle.close()
-        logging.info('%s: saved model', filename)
+        if isinstance(filename_or_handle, util.basestring):
+            handle.close()
+        logging.info('%s: saved model', filename_or_handle)
 
     @classmethod
-    def load(cls, filename):
+    def load(cls, filename_or_handle):
         '''Load a saved network from disk.
 
         Parameters
         ----------
-        filename : str
-            Load the state of a network from a pickle file at the named path. If
-            this name ends in ".gz" then the input will automatically be
-            gunzipped; otherwise the input will be treated as a "raw" pickle.
+        filename_or_handle : str or file handle
+            Load the state of this network from a pickle file. If this parameter
+            is a string, it names the file where the pickle will be saved. If it
+            is a file-like object, this object will be used for reading the
+            pickle. If the filename ends in ".gz" then the output will
+            automatically be gunzipped.
         '''
-        opener = gzip.open if filename.lower().endswith('.gz') else open
-        handle = opener(filename, 'rb')
+        assert not isinstance(cls, Network), \
+            'cannot load an instance! say instead: net = Network.load(source)'
+        if isinstance(filename_or_handle, util.basestring):
+            opener = gzip.open if filename_or_handle.lower().endswith('.gz') else open
+            handle = opener(filename_or_handle, 'rb')
+        else:
+            handle = filename_or_handle
         model = pickle.load(handle)
-        handle.close()
-        logging.info('%s: loaded model', filename)
+        if isinstance(filename_or_handle, util.basestring):
+            handle.close()
+        logging.info('%s: loaded model', filename_or_handle)
         return model
 
     def loss(self, **kwargs):

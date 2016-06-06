@@ -27,8 +27,8 @@ class Convolution(base.Layer):
 
     Parameters
     ----------
-    filter_shape : (int, int)
-        Shape of the convolution filters for this layer.
+    filter_size : (int, int)
+        Size of the convolution filters for this layer.
     stride : (int, int), optional
         Apply convolutions with this stride; i.e., skip this many samples
         between convolutions. Defaults to (1, 1)---that is, no skipping.
@@ -36,26 +36,24 @@ class Convolution(base.Layer):
         Compute convolutions with this border mode. Defaults to 'valid'.
     '''
 
-    def __init__(self, filter_shape, stride=(1, 1), border_mode='valid', **kwargs):
-        self.filter_shape = filter_shape
+    def __init__(self, filter_size, stride=(1, 1), border_mode='valid', **kwargs):
+        self.filter_size = filter_size
         self.stride = stride
         self.border_mode = border_mode
         super(Convolution, self).__init__(**kwargs)
 
     def log(self):
-        '''Log some information about this layer.'''
-        inputs = ', '.join('({0}){1.size}'.format(n, l)
-                           for n, l in self._resolved_inputs.items())
-        logging.info('layer %s "%s": %s -> %s, %s %s filters %s, %s, %d parameters',
+        inputs = ', '.join('"{0}" {1}'.format(*ns) for ns in self._input_shapes.items())
+        logging.info('layer %s "%s" %s %s %s filters %s%s from %s',
                      self.__class__.__name__,
                      self.name,
-                     inputs,
-                     self.size,
-                     'x'.join(str(i) for i in self.filter_shape),
-                     self.border_mode,
-                     ''.join('+{}'.format(i) for i in self.stride),
+                     self.output_shape,
                      getattr(self.activate, 'name', self.activate),
-                     sum(np.prod(p.get_value().shape) for p in self.params))
+                     self.border_mode,
+                     'x'.join(str(i) for i in self.filter_size),
+                     ''.join('+{}'.format(i) for i in self.stride),
+                     inputs)
+        logging.info('learnable parameters: %d', self.log_params())
 
     def add_conv_weights(self, name, mean=0, std=None, sparsity=0):
         '''Add a convolutional weight array to this layer's parameters.
@@ -73,7 +71,7 @@ class Convolution(base.Layer):
             Fraction of weights to set to zero. Defaults to 0.
         '''
         nin = self.input_size
-        nout = self.size
+        nout = self.output_size
         mean = self.kwargs.get(
             'mean_{}'.format(name),
             self.kwargs.get('mean', mean))
@@ -83,9 +81,9 @@ class Convolution(base.Layer):
         sparsity = self.kwargs.get(
             'sparsity_{}'.format(name),
             self.kwargs.get('sparsity', sparsity))
-        arr = np.zeros((nout, nin) + self.filter_shape, util.FLOAT)
-        for r in range(self.filter_shape[0]):
-            for c in range(self.filter_shape[1]):
+        arr = np.zeros((nout, nin) + self.filter_size, util.FLOAT)
+        for r in range(self.filter_size[0]):
+            for c in range(self.filter_size[1]):
                 arr[:, :, r, c] = util.random_matrix(
                     nout, nin, mean, std, sparsity=sparsity, rng=self.rng)
         self._params.append(theano.shared(arr, name=self._fmt(name)))
@@ -119,44 +117,37 @@ class Conv1(Convolution):
 
     def __init__(self, filter_size, stride=1, border_mode='valid', **kwargs):
         super(Conv1, self).__init__(
-            filter_shape=(1, filter_size),
+            filter_size=(1, filter_size),
             stride=(1, stride),
             border_mode=border_mode,
             **kwargs)
 
     def setup(self):
-        '''Set up the parameters and initial values for this layer.'''
         self.add_conv_weights('w')
-        self.add_bias('b', self.size)
+        self.add_bias('b', self.output_size)
+
+    def resolve_outputs(self):
+        if self.input_shape is None or self.input_shape[0] is None:
+            return super(Conv1, self).resolve_outputs()
+        image = np.array(self.input_shape[:-1])
+        kernel = np.array(self.filter_size)
+        result = image
+        if self.border_mode == 'full':
+            result = image + kernel - 1
+        if self.border_mode == 'valid':
+            result = image - kernel + 1
+        self._output_shapes['out'] = tuple(result) + (self.kwargs['size'], )
 
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of Theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of Theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function,
-            and an "out" output that gives the post-activation output.
-        updates : list of update pairs
-            A sequence of updates to apply inside a Theano function.
-        '''
         # input is:     (batch, time, input)
         # conv2d wants: (batch, input, 1, time)
-        x = self._only_input(inputs).dimshuffle(0, 2, 'x', 1)
+        x = inputs[self.input_name].dimshuffle(0, 2, 'x', 1)
 
         pre = TT.nnet.conv.conv2d(
             x,
             self.find('w'),
             image_shape=(None, self.input_size, 1, None),
-            filter_shape=(self.size, self.input_size) + self.filter_shape,
+            filter_shape=(self.output_size, self.input_size) + self.filter_size,
             border_mode=self.border_mode,
             subsample=self.stride,
         ).dimshuffle(0, 3, 1, 2)[:, :, :, 0] + self.find('b')
@@ -185,46 +176,33 @@ class Conv2(Convolution):
         Compute convolutions with this border mode. Defaults to 'valid'.
     '''
 
-    def __init__(self, filter_size, stride=(1, 1), border_mode='valid', **kwargs):
-        super(Conv2, self).__init__(
-            filter_shape=filter_size,
-            stride=stride,
-            border_mode=border_mode,
-            **kwargs)
-
     def setup(self):
-        '''Set up the parameters and initial values for this layer.'''
         self.add_conv_weights('w')
-        self.add_bias('b', self.size)
+        self.add_bias('b', self.output_size)
+
+    def resolve_outputs(self):
+        shape = self.input_shape
+        if shape is None or shape[0] is None or shape[1] is None:
+            return super(Conv2, self).resolve_outputs()
+        image = np.array(shape[:-1])
+        kernel = np.array(self.filter_size)
+        result = image
+        if self.border_mode == 'full':
+            result = image + kernel - 1
+        if self.border_mode == 'valid':
+            result = image - kernel + 1
+        self._output_shapes['out'] = tuple(result) + (self.kwargs['size'], )
 
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of Theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of Theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function,
-            and an "out" output that gives the post-activation output.
-        updates : list of update pairs
-            A sequence of updates to apply inside a Theano function.
-        '''
         # input is:     (batch, width, height, input)
         # conv2d wants: (batch, input, width, height)
-        x = self._only_input(inputs).dimshuffle(0, 3, 1, 2)
+        x = inputs[self.input_name].dimshuffle(0, 3, 1, 2)
 
         pre = TT.nnet.conv.conv2d(
             x,
             self.find('w'),
             image_shape=(None, self.input_size, None, None),
-            filter_shape=(self.size, self.input_size) + self.filter_shape,
+            filter_shape=(self.output_size, self.input_size) + self.filter_size,
             border_mode=self.border_mode,
             subsample=self.stride,
         ).dimshuffle(0, 2, 3, 1) + self.find('b')
@@ -244,27 +222,9 @@ class Pool1(Pooling):
     '''
 
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of Theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of Theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function,
-            and an "out" output that gives the post-activation output.
-        updates : list of update pairs
-            A sequence of updates to apply inside a Theano function.
-        '''
         # input is:     (batch, time, input)
         # conv2d wants: (batch, input, time, 1)
-        x = self._only_input(inputs).dimshuffle(0, 2, 1, 'x')
+        x = inputs[self.input_name].dimshuffle(0, 2, 1, 'x')
 
         pre = TT.signal.downsample.max_pool_2d(
             x, self.pool_size, st=self.stride, mode=self.mode,
@@ -280,27 +240,9 @@ class Pool2(Pooling):
     '''
 
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of Theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of Theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function,
-            and an "out" output that gives the post-activation output.
-        updates : list of update pairs
-            A sequence of updates to apply inside a Theano function.
-        '''
         # input is:     (batch, width, height, input)
         # conv2d wants: (batch, input, width, height)
-        x = self._only_input(inputs).dimshuffle(0, 3, 1, 2)
+        x = inputs[self.input_name].dimshuffle(0, 3, 1, 2)
 
         pre = TT.signal.downsample.max_pool_2d(
             x, self.pool_size, st=self.stride, mode=self.mode,
