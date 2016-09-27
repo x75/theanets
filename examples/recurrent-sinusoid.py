@@ -66,15 +66,17 @@ wave_ax.plot(T, SIN, ':', label='Target', alpha=0.7, color='#111111')
 # For each layer type, train a model containing that layer, and plot its
 # predicted output.
 for i, layer in enumerate((
-    dict(form='rnn', activation='relu', diagonal=0.5), # name="rnn"
-    dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
-    dict(form='scrn', activation='linear'),
-    dict(form='gru', activation='relu'),
-    dict(form='lstm', activation='tanh'),
-    # dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)), # 64
-    dict(form='clockwork', activation='linear', periods=(1, 2, 4, 8, 16, 32, 64, 128)),
-    )):
-    name = layer['form']
+        dict(form='rnn', activation='linear', diagonal=0.5),
+        dict(form='rnn', activation='relu', diagonal=0.5),
+        dict(form='rrnn', activation='relu', rate='vector', diagonal=0.5),
+        dict(form='scrn', activation='linear'),
+        dict(form='scrn', activation='elu'),
+        dict(form='gru', activation='relu'),
+        dict(form='gru', activation='elu'),
+        dict(form='lstm', activation='tanh'),
+        dict(form='clockwork', activation='elu', periods=(1, 4, 16, 64)),
+        dict(form='clockwork', activation='linear', periods=(1, 4, 16, 64)))):
+    name = '{form}+{activation}'.format(**layer)
     layer['size'] = 64
     logging.info('training %s model', name)
     # numix = 3

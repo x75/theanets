@@ -250,14 +250,13 @@ class SupervisedPretrainer(object):
                     'feedforward',
                     name='lwout',
                     inputs=original[i].output_name,
-                    size=original[-1].size,
+                    size=original[-1].output_size,
                     activation=original[-1].kwargs['activation']))
                 net.layers = original[:i+1] + tail
             logging.info('layerwise: training %s',
                          ' -> '.join(l.name for l in net.layers))
-            [l.resolve(net.layers) for l in net.layers]
+            [l.bind(net, initialize=False) for l in net.layers]
             [l.setup() for l in tail]
-            [l.log() for l in net.layers]
             net.losses[0].output_name = net.layers[-1].output_name
             trainer = DownhillTrainer(self.algo, net)
             for monitors in trainer.itertrain(train, valid, **kwargs):
@@ -311,6 +310,8 @@ class UnsupervisedPretrainer(object):
         '''
         from . import feedforward
 
+        original_layer_names = set(l.name for l in self.network.layers[:-1])
+
         # construct a "shadow" of the input network, using the original
         # network's encoding layers, with tied weights in an autoencoder
         # configuration.
@@ -331,8 +332,8 @@ class UnsupervisedPretrainer(object):
 
         # copy trained parameter values back to our original network.
         for param in ae.params:
-            if not param.name.startswith('tied'):
-                l, p = param.name.split('.')
+            l, p = param.name.split('.')
+            if l in original_layer_names:
                 logging.info('copying pretrained parameter %s', param.name)
                 self.network.find(l, p).set_value(param.get_value())
 

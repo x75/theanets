@@ -59,44 +59,26 @@ class Feedforward(base.Layer):
 
     __extra_registration_keys__ = ['ff']
 
+    def _weight_for_input(self, name):
+        return 'w' if len(self._input_shapes) == 1 else 'w_{}'.format(name)
+
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of Theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of Theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function,
-            and an "out" output that gives the post-activation output.
-        updates : list of update pairs
-            An empty list of updates to apply from this layer.
-        '''
         def _dot(x, y):
             if isinstance(x, SS.SparseVariable):
                 return SS.structured_dot(x, y)
             else:
                 return TT.dot(x, y)
 
-        def weight(n):
-            return 'w' if len(self.inputs) == 1 else 'w_{}'.format(n)
-
-        xws = ((inputs[n], self.find(weight(n))) for n in self.inputs)
+        xws = ((inputs[name], self.find(self._weight_for_input(name)))
+               for name in self._input_shapes)
         pre = sum(_dot(x, w) for x, w in xws) + self.find('b')
         return dict(pre=pre, out=self.activate(pre)), []
 
     def setup(self):
-        '''Set up the parameters and initial values for this layer.'''
-        for name, layer in self._resolved_inputs.items():
-            label = 'w' if len(self.inputs) == 1 else 'w_{}'.format(name)
-            self.add_weights(label, layer.size, self.size)
-        self.add_bias('b', self.size)
+        for name, shape in self._input_shapes.items():
+            label = self._weight_for_input(name)
+            self.add_weights(label, shape[-1], self.output_size)
+        self.add_bias('b', self.output_size)
 
 
 class Classifier(Feedforward):
@@ -157,74 +139,46 @@ class Tied(base.Layer):
 
     def __init__(self, partner, **kwargs):
         self.partner = partner
-        kwargs['size'] = None
+        kwargs['size'] = kwargs['shape'] = None
         if isinstance(partner, base.Layer):
-            kwargs['size'] = partner.input_size
+            kwargs['shape'] = partner.input_shape
         super(Tied, self).__init__(**kwargs)
 
     def transform(self, inputs):
-        '''Transform the inputs for this layer into an output for the layer.
-
-        Parameters
-        ----------
-        inputs : dict of Theano expressions
-            Symbolic inputs to this layer, given as a dictionary mapping string
-            names to Theano expressions. See :func:`Layer.connect`.
-
-        Returns
-        -------
-        outputs : dict of Theano expressions
-            A map from string output names to Theano expressions for the outputs
-            from this layer. This layer type generates a "pre" output that gives
-            the unit activity before applying the layer's activation function,
-            and an "out" output that gives the post-activation output.
-        updates : list of update pairs
-            An empty sequence of updates.
-        '''
-        x = self._only_input(inputs)
+        x = inputs[self.input_name]
         pre = TT.dot(x, self.partner.find('w').T) + self.find('b')
         return dict(pre=pre, out=self.activate(pre)), []
 
-    def resolve(self, layers):
-        super(Tied, self).resolve(layers)
-
+    def resolve_inputs(self, layers):
+        super(Tied, self).resolve_inputs(layers)
         if isinstance(self.partner, util.basestring):
             # if the partner is named, just get that layer.
             matches = [l for l in layers if l.name == self.partner]
             if len(matches) != 1:
                 raise util.ConfigurationError(
-                    'layer "{}": cannot find partner "{}"'.format(
-                        self.name, partner))
+                    'tied layer "{}": cannot find partner "{}"'
+                    .format(self.name, self.partner))
             self.partner = matches[0]
 
-        self.size = self.partner.input_size
+    def resolve_outputs(self):
+        self._output_shapes['out'] = self.partner.input_shape
 
     def setup(self):
-        '''Set up the parameters and initial values for this layer.'''
         # this layer does not create a weight matrix!
-        self.add_bias('b', self.size)
+        self.add_bias('b', self.output_size)
 
     def log(self):
-        '''Log some information about this layer.'''
-        inputs = ', '.join('({0}){1.size}'.format(n, l)
-                           for n, l in self._resolved_inputs.items())
-        logging.info('layer %s "%s" << "%s": %s -> %s, %s, %d parameters',
+        inputs = ', '.join('"{0}" {1}'.format(*ns) for ns in self._input_shapes.items())
+        logging.info('layer %s "%s" (tied to "%s") %s %s from %s',
                      self.__class__.__name__,
                      self.name,
                      self.partner.name,
-                     inputs,
-                     self.size,
+                     self.output_shape,
                      getattr(self.activate, 'name', self.activate),
-                     sum(np.prod(p.get_value().shape) for p in self.params))
+                     inputs)
+        logging.info('learnable parameters: %d', self.log_params())
 
     def to_spec(self):
-        '''Create a specification dictionary for this layer.
-
-        Returns
-        -------
-        spec : dict
-            A dictionary specifying the configuration of this layer.
-        '''
         spec = super(Tied, self).to_spec()
         spec['partner'] = self.partner.name
         return spec
